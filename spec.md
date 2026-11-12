@@ -17,16 +17,17 @@
 
 Every file in this repository **MUST** obey seven architectural laws:
 
-### Law 1 — 100% Dumb & Stateless (`UI = f(props)`)
-* Components **MUST** be pure functions of their props.
+### Law 1 — 100% Dumb, Stateless `1-In → 1-Out` Primitives (`Props → Element`)
+* Every component and helper **MUST** be a single-focus `1-in → 1-out` pure function (`Props → JSX.Element`) with zero external runtime dependencies.
 * The following APIs are **strictly banned** inside `packages/ui/src/**`: `useState`, `useReducer`, `useContext`, `createContext`, `useSyncExternalStore`, `fetch`, `XMLHttpRequest`, `WebSocket`, timers (`setTimeout`, `setInterval`), and mutable module-level state.
 * **Permitted DOM-only synchronization**:
   1. Calling native `HTMLDialogElement.showModal()` / `close()` inside an effect when a controlled `open: boolean` prop changes.
   2. Handing off an `HTMLCanvasElement` via `transferControlToOffscreen()` to a visualization worker.
   3. A single passive capture listener (`pointerdown` / `keydown`) recording a `WeakRef<HTMLElement>` to the last user-activated interactive trigger for origin-bound view transitions (Law 7).
 
-### Law 2 — 1 JSX Tag = 1 Honest Native HTML Element (Pure Composition, Zero Wrappers, Zero `slots`)
-* Every exported component **MUST** render **exactly one** semantic HTML element matching its name and purpose (`Button` $\to$ `<button>`, `Input` $\to$ `<input>`, `Checkbox` $\to$ `<input type="checkbox">`, `Select` $\to$ `<select>`, `Dialog` $\to$ `<dialog>`, `Disclosure` $\to$ `<details>`, `DisclosureSummary` $\to$ `<summary>`, `Table` $\to$ `<table>`, `CanvasStage` $\to$ `<canvas>`, `Card` $\to$ `<section>`).
+### Law 2 — 1 JSX Tag = 1 Honest Native HTML Element & 1–2 Word Max Naming
+* Every exported component **MUST** render **exactly one** semantic HTML element matching its name and purpose (`Button` $\to$ `<button>`, `Input` $\to$ `<input>`, `Checkbox` $\to$ `<input type="checkbox">`, `Select` $\to$ `<select>`, `Dialog` $\to$ `<dialog>`, `Disclosure` $\to$ `<details>`, `Summary` $\to$ `<summary>`, `Table` $\to$ `<table>`, `CanvasStage` $\to$ `<canvas>`, `Card` $\to$ `<section>`).
+* **1–2 Word Max Naming Law**: Every package, domain module, exported component, and helper function **MUST** be named in **1 or 2 words maximum** (`Button`, `IconButton`, `FacetList`, `ChipBar`, `HeaderCell`, `RangeBar`). Catch-all `utils`, `helpers`, and `common` files are banned.
 * **Hidden wrapper `<div>`s are banned.** No component may secretly wrap an `<input>` or `<button>` inside an extra `<div>` or `<span>`.
 * **`slots` and `slotClasses` APIs are banned.** Multi-element structures are built strictly through explicit JSX composition (`<Field><Label htmlFor="id">Name</Label><Input id="id" /></Field>`).
 * **`*Container`, `*Root`, and `*Wrapper` suffixes on component names or SCSS variables are banned.** The component's PascalCase name (`Button`, `Input`, `Field`, `Card`) **is always** its outer box.
@@ -50,7 +51,7 @@ Every file in this repository **MUST** obey seven architectural laws:
 * `<svg>`, `<path>`, `.svg` asset files, and `data:image/svg+xml` URIs are **banned** across source, tests, docs, and build outputs.
 * **UI Icons & Affordances**: Simple directional/state indicators (chevrons, carets, checkmarks, close `×`, sort indicators, disclosure arrows, status dots) **MUST** use pure CSS geometric borders/transforms on a single `<span>` (`0 B` network cost). Complex monochrome symbols (`shield`, `branch`, `lock`, `merkle`, `commit`, `snapshot`, `alert`, `terminal`) **MUST** use the bundled sub-`2 KB` subset WOFF2 monochrome glyph font (`font-display: block`, `aria-hidden="true"`), rendered via the OS/GPU glyph atlas with native `currentColor` and `forced-colors` support.
 * **Inline Branch/Commit Graphs (`DagRail`)**: **MUST** use pure CSS box/arc lane `<span>`s (`::before` solid/dashed hairlines + `::after` `border-radius` quarter-circle connectors + circular node rings).
-* **High-Scale Data Visualization (`CanvasStage`, `TimeRangeBar`, `HeatmapCanvas`)**: **MUST** use `styled.canvas` (`1 tag = 1 <canvas>`) with `OffscreenCanvas` worker rendering over binary typed arrays (`Float32Array` / `Uint32Array` ring buffers), capable of rendering and smoothly transitioning `100,000+` points at `60–120 fps` with `0` React re-renders.
+* **High-Scale Data Visualization (`CanvasStage`, `RangeBar`, `HeatmapCanvas`)**: **MUST** use `styled.canvas` (`1 tag = 1 <canvas>`) with `OffscreenCanvas` worker rendering over binary typed arrays (`Float32Array` / `Uint32Array` `SeriesFrame` buffers wire-compatible with `@susanbdev/shared/primitives/codec`), capable of rendering and smoothly transitioning `100,000+` points at `60–120 fps` with `0` React re-renders.
 
 ### Law 6 — Bootstrap-Ergonomic 12-Column Structural Grid (`Container` / `Row` / `Col`)
 * Flexbox **MUST NEVER** be used as a 2D page/section column grid (`min-width: auto` content blowouts on long SHAs, URLs, `<pre>` blocks, and wide tables are unacceptable).
@@ -92,13 +93,13 @@ vespoli-ui/
 │           ├── index.ts            # Single flat tree-shakeable barrel (sideEffects: false)
 │           ├── grid.tsx            # Container, Row, Col (12-col CSS Grid)
 │           ├── layout.tsx          # Shell, Card, SplitView, Stack, Toolbar, Heading, Breadcrumbs
-│           ├── controls.tsx        # Button, IconButton, Input, Select, Checkbox, Label, Field, SegmentedControl, Tabs, Pagination
-│           ├── filter.tsx          # FacetBar, FacetGroup, FacetOptionList, FilterChipBar
-│           ├── table.tsx           # Table, TableHead, TableBody, TableRow, TableHeaderCell, TableCell, VirtualTable, TreeTable
-│           ├── data.tsx            # Properties, PropertyItem, Disclosure, DisclosureSummary, Code, CodeBlock, JsonTree, Empty
-│           ├── status.tsx          # Badge, ProofBadge, DigestChip, Notice, SeverityBanner, Metrics, MetricItem, Icon
+│           ├── controls.tsx        # Button, IconButton, Input, Select, Checkbox, Label, Field, Segments, Tabs, Pagination
+│           ├── filter.tsx          # FacetBar, FacetGroup, FacetList, ChipBar
+│           ├── table.tsx           # Table, TableHead, TableBody, TableRow, HeaderCell, TableCell, VirtualTable, TreeTable
+│           ├── data.tsx            # Properties, PropertyItem, Disclosure, Summary, Code, CodeBlock, JsonTree, Empty
+│           ├── status.tsx          # Badge, ProofBadge, DigestChip, Notice, AlertBanner, Metrics, MetricItem, Icon
 │           ├── overlay.tsx         # Dialog, Inspector
-│           ├── canvas.tsx          # CanvasStage, TimeRangeBar, HeatmapCanvas + offscreen worker protocol
+│           ├── canvas.tsx          # CanvasStage, RangeBar, HeatmapCanvas + offscreen worker protocol
 │           ├── transitions.ts      # Origin WeakRef tracker, transitionTo(), aperture morph helpers
 │           └── a11y.ts             # Pure stateless roving-tabindex & keyboard navigation functions
 ├── bench/
@@ -335,14 +336,14 @@ export const Button = styled.button.attrs({ type: 'button' })<ButtonStyleProps>`
 
 ## 7. High-Scale `<canvas>` Telemetry Primitives (`100k+` Points, `0` React Re-Renders)
 
-### 7.1 `CanvasStage`, `TimeRangeBar`, and `HeatmapCanvas`
+### 7.1 `CanvasStage`, `RangeBar`, and `HeatmapCanvas`
 * Each visualization component renders a single `styled.canvas` element (`1 JSX tag = 1 <canvas>`), styled in `@layer vui.components` with surface fill, hairline border, and Frame-0 CSS `repeating-linear-gradient` gridlines so SSR/initial paint never flashes an empty void.
 * On mount, `CanvasStage` calls `canvas.transferControlToOffscreen()` and posts the `OffscreenCanvas` + computed theme token palette (`getComputedStyle` read once and updated on theme class change) to a dedicated Web Worker.
 * **Data Ingestion & Animation Protocol (Zero Main-Thread Load)**:
   1. **Typed-Array Ring Buffer**: Worker maintains pre-allocated `Float32Array` / `Uint32Array` ring buffers—never JS object arrays in React state.
   2. **Live Stream Scroll-Blitting**: Appending live telemetry blits the existing GPU texture left (`ctx.drawImage(canvas, -dx, 0)`) and rasterizes only the newly arrived pixel columns (`< 0.05 ms`/frame).
   3. **Pixel-Column Min/Max Decimation & `120ms` Filter Transitions**: Datasets of `100,000–1,000,000+` points are decimated in a single linear pass to `<= physicalWidthPx` min/max column pairs and interpolated (`lerp` in 2D `OffscreenCanvas` or `mix(prevY, nextY, t)` in WebGL2) over `120ms` at `< 1%` CPU with **zero** React `<Profiler>` commits.
-* **Accessibility Pairing**: Interactive range selection on `TimeRangeBar` pairs the `<canvas>` (`aria-hidden="true"`) with dual semantic `<input type="range">` / ARIA slider handles and screen-reader summary attributes.
+* **Accessibility Pairing**: Interactive range selection on `RangeBar` pairs the `<canvas>` (`aria-hidden="true"`) with dual semantic `<input type="range">` / ARIA slider handles and screen-reader summary attributes.
 
 ---
 
@@ -361,7 +362,7 @@ Every component forwards native HTML attributes and `ref` (React 19 `ref` prop) 
 | `Stack` | `<div>` | `direction?: 'column' \| 'row'`, `gap?: 0..8`, `align?`, `justify?`, `wrap?: boolean` | 1D Flexbox strictly for use inside `Col`s |
 | `Toolbar` | `<div role="toolbar">` | `gap?: 1..4`, `justify?: 'start' \| 'between' \| 'end'` | 1D action/filter bar with roving focus support |
 | `Heading` | `<h1>`..`<h6>` (`level?: 1..6`) | `size?: 'xs' \| 'sm' \| 'md' \| 'lg' \| 'xl'` | Decouples semantic heading rank from visual scale |
-| `Breadcrumbs` / `BreadcrumbItem` | `<nav>` / `<a>` or `<span>` | `current?: boolean` | Sets `aria-label="Breadcrumb"` and `aria-current="page"` |
+| `Breadcrumbs` / `Crumb` | `<nav>` / `<a>` or `<span>` | `current?: boolean` | Sets `aria-label="Breadcrumb"` and `aria-current="page"` |
 | `Button` | `<button>` | `variant?: 'primary' \| 'secondary' \| 'quiet' \| 'danger'`, `compact?: boolean`, `loading?: boolean` | Defaults `type="button"`; shimmer border on `loading` |
 | `IconButton` | `<button>` | Same as `Button` + **required** `'aria-label': string` | Compile error (`VUI004`) if `'aria-label'` is omitted |
 | `Input` | `<input>` | `compact?: boolean`, `invalid?: boolean`, `mono?: boolean` | Sets `aria-invalid` when `invalid={true}` |
@@ -369,24 +370,24 @@ Every component forwards native HTML attributes and `ref` (React 19 `ref` prop) 
 | `Checkbox` | `<input type="checkbox">` | `invalid?: boolean` | `appearance: none` + `&::after` CSS checkmark transition |
 | `Label` | `<label>` | `muted?: boolean` | Explicit `htmlFor` composition |
 | `Field` / `FieldHint` / `FieldError` | `<div>` / `<p>` / `<p role="alert">` | `gap?: 1..3` | Pure composition wrapper for form controls |
-| `SegmentedControl` / `Segment` | `<div role="radiogroup">` / `<button role="radio">` | `active?: boolean`, `compact?: boolean` | Stateless exclusive toggle group |
+| `Segments` / `Segment` | `<div role="radiogroup">` / `<button role="radio">` | `active?: boolean`, `compact?: boolean` | Stateless exclusive toggle group |
 | `Tabs` / `Tab` / `TabPanel` | `<div role="tablist">` / `<button role="tab">` / `<section role="tabpanel">` | `active?: boolean` | Pairs with `vespoli-ui/a11y` roving-tabindex helpers |
 | `Pagination` | `<nav>` | `hasPrev: boolean`, `hasNext: boolean`, `onPrev`, `onNext`, `summary?: string` | Cursor/page stateless navigation controls |
-| `FacetBar` / `FacetGroup` / `FacetOptionList` | `<aside>` or `<div>` / `<fieldset>` / `<ul role="listbox">` | `selectedKeys`, `excludedKeys`, `onToggleKey` | Delegated event handling + live facet count badges |
-| `FilterChipBar` / `FilterChip` | `<div role="region">` / `<button>` | `operator?: 'in' \| 'not'`, `onRemove` | Active filter predicate chips |
-| `Table` / `TableHead` / `TableBody` / `TableRow` / `TableHeaderCell` / `TableCell` | `<table>` / `<thead>` / `<tbody>` / `<tr>` / `<th>` / `<td>` | `align?: 'left' \| 'center' \| 'right'`, `width?: 'xs' \| 'sm' \| 'md' \| 'lg' \| 'auto'`, `selected?: boolean`, `onRowActivate` | Single delegated listener on `<tbody>`; `React.memo` row isolation; `tabular-nums` on right-aligned cells |
+| `FacetBar` / `FacetGroup` / `FacetList` | `<aside>` or `<div>` / `<fieldset>` / `<ul role="listbox">` | `selectedKeys`, `excludedKeys`, `onToggleKey` | Delegated event handling + live facet count badges |
+| `ChipBar` / `Chip` | `<div role="region">` / `<button>` | `operator?: 'in' \| 'not'`, `onRemove` | Active filter predicate chips |
+| `Table` / `TableHead` / `TableBody` / `TableRow` / `HeaderCell` / `TableCell` | `<table>` / `<thead>` / `<tbody>` / `<tr>` / `<th>` / `<td>` | `align?: 'left' \| 'center' \| 'right'`, `width?: 'xs' \| 'sm' \| 'md' \| 'lg' \| 'auto'`, `selected?: boolean`, `onRowActivate` | Single delegated listener on `<tbody>`; `React.memo` row isolation; `tabular-nums` on right-aligned cells |
 | `VirtualTable` | `<table>` | `totalRows: number`, `offsetPx: number`, `afterPx: number` | Stateless spacer-row windowing (`data-spacer` quantized heights or CSS custom scroll window) at `60 fps` for `100k+` rows |
 | `TreeTable` / `TreeRow` | `<table role="treegrid">` / `<tr role="row">` | `level: 1..8`, `expanded?: boolean` | Hierarchical manifest/file browser (`aria-level`, `aria-expanded`) |
 | `DagRail` / `DagLane` | `<div>` / `<span>` | `edge: 'straight' \| 'fork-right' \| 'merge-left' \| 'ghost'`, `node?: 'commit' \| 'merge' \| 'head' \| 'ghost'` | Zero-SVG pure CSS box/arc commit & force-push lineage cell |
 | `Properties` / `PropertyItem` | `<dl>` / `<div>` | `mono?: boolean` | Compact key-value metadata definition list |
-| `Disclosure` / `DisclosureSummary` | `<details>` / `<summary>` | Controlled or native `open` | Animated via `::details-content` + `@starting-style` |
+| `Disclosure` / `Summary` | `<details>` / `<summary>` | Controlled or native `open` | Animated via `::details-content` + `@starting-style` |
 | `Code` / `CodeBlock` / `JsonTree` | `<code>` / `<pre>` / `<ul role="tree">` | `wrap?: boolean` | Stateless structured payload & code viewers |
 | `Badge` / `ProofBadge` / `DigestChip` | `<span>` / `<span>` / `<button>` | `tone?: 'neutral' \| 'accent' \| 'success' \| 'warn' \| 'danger'`, `verified?: boolean` | Cryptographic state pills & tabular-hex SHA chips |
-| `Notice` / `SeverityBanner` / `Empty` | `<div role="status">` / `<div role="alert">` / `<section>` | `severity?: 'info' \| 'warn' \| 'danger' \| 'critical'` | Triage alerts & empty states |
+| `Notice` / `AlertBanner` / `Empty` | `<div role="status">` / `<div role="alert">` / `<section>` | `severity?: 'info' \| 'warn' \| 'danger' \| 'critical'` | Triage alerts & empty states |
 | `Metrics` / `MetricItem` | `<section>` / `<article>` | `trend?: 'up' \| 'down' \| 'flat'` | High-density KPI strip |
 | `Icon` | `<span aria-hidden="true">` | `name: GlyphName`, `size?: 'sm' \| 'md' \| 'lg'` | Pure CSS geometric primitive or `< 2 KB` WOFF2 glyph |
 | `Dialog` / `Inspector` | `<dialog>` | `open: boolean`, `onClose: () => void`, `loading?: boolean`, `drawer?: 'right' \| 'bottom'` | Origin-aperture morph open/close + native `::backdrop` |
-| `CanvasStage` / `TimeRangeBar` / `HeatmapCanvas` | `<canvas>` | `buffer`, `onBrushChange` | `OffscreenCanvas` ring-buffer `100k+` point renderers |
+| `CanvasStage` / `RangeBar` / `HeatmapCanvas` | `<canvas>` | `buffer`, `onBrushChange` | `OffscreenCanvas` ring-buffer `100k+` point renderers |
 
 ---
 
