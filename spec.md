@@ -25,12 +25,12 @@ Every file in this repository **MUST** obey seven architectural laws:
   2. Handing off an `HTMLCanvasElement` via `transferControlToOffscreen()` to a visualization worker.
   3. A single passive capture listener (`pointerdown` / `keydown`) recording a `WeakRef<HTMLElement>` to the last user-activated interactive trigger for origin-bound view transitions (Law 7).
 
-### Law 2 — 1 JSX Tag = 1 Honest Native HTML Element & 1–2 Word Max Naming
+### Law 2 — 1 JSX Tag = 1 Honest Native HTML Element & Domain Noun / Verb Ontology
 * Every exported component **MUST** render **exactly one** semantic HTML element matching its name and purpose (`Button` $\to$ `<button>`, `Input` $\to$ `<input>`, `Checkbox` $\to$ `<input type="checkbox">`, `Select` $\to$ `<select>`, `Dialog` $\to$ `<dialog>`, `Disclosure` $\to$ `<details>`, `Summary` $\to$ `<summary>`, `Table` $\to$ `<table>`, `CanvasStage` $\to$ `<canvas>`, `Card` $\to$ `<section>`).
-* **1–2 Word Max Naming Law**: Every package, domain module, exported component, and helper function **MUST** be named in **1 or 2 words maximum** (`Button`, `IconButton`, `FacetList`, `ChipBar`, `HeaderCell`, `RangeBar`). Catch-all `utils`, `helpers`, and `common` files are banned.
+* **Domain Nouns = Components & Data; Verbs = Functions**: Components, props interfaces, and modules are **Domain Nouns** describing what they **are** (`1–2` words by default: `Button`, `IconButton`, `FacetList`, `ChipBar`, `HeaderCell`, `RangeBar`; `3`-word hard ceiling **only** when removing genuine ambiguity). Standalone helpers and transitions are **Verbs** (`transitionTo()`, `trackOrigin()`, `moveFocus()`). Catch-all `utils`, `helpers`, and `common` files are banned.
 * **Hidden wrapper `<div>`s are banned.** No component may secretly wrap an `<input>` or `<button>` inside an extra `<div>` or `<span>`.
 * **`slots` and `slotClasses` APIs are banned.** Multi-element structures are built strictly through explicit JSX composition (`<Field><Label htmlFor="id">Name</Label><Input id="id" /></Field>`).
-* **`*Container`, `*Root`, and `*Wrapper` suffixes on component names or SCSS variables are banned.** The component's PascalCase name (`Button`, `Input`, `Field`, `Card`) **is always** its outer box.
+* **`*Container`, `*Root`, `*Wrapper`, and `*Contract` suffixes on component/type names or SCSS variables are banned.** The component's PascalCase noun (`Button`, `Input`, `Field`, `Card`) **is always** its outer box.
 
 ### Law 3 — Colocated `styled` Templates Extracted Statically to Idiomatic SCSS (`0 B` Runtime)
 * Components are authored with colocated `styled.<tag>` tagged template literals (`@vespoli/styled`) using real kebab-case CSS, `&` nesting (`&.active`, `&:checked`, `&[open]`, `&:hover:not(:disabled)`), native CSS `transition` rules, and ~22 flat semantic tokens.
