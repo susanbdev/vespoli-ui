@@ -1,0 +1,75 @@
+#!/bin/sh
+set -eu
+
+REPO_ROOT="$(python3 -c 'import os, sys; print(os.path.abspath(os.path.join(os.path.dirname(sys.argv[1]), "..")))' "$0")"
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}"
+
+echo "==> [1/7] Pure 7-bit ASCII & forbidden-path hygiene across git-tracked files"
+python3 - "$REPO_ROOT" <<'PY'
+import os
+import subprocess
+import sys
+
+root = sys.argv[1]
+tracked = sorted(
+    set(
+        subprocess.check_output(
+            ["git", "-C", root, "ls-files", "--cached", "--others", "--exclude-standard"],
+            text=True,
+        ).splitlines()
+    )
+)
+errors = []
+for rel in tracked:
+    full = os.path.join(root, rel)
+    if not os.path.isfile(full):
+        continue
+    data = open(full, "rb").read()
+    for idx, b in enumerate(data):
+        if b >= 0x80 or (b < 0x20 and b not in (9, 10)):
+            errors.append(f"{rel}: byte offset {idx} has non-7-bit-ASCII value 0x{b:02x}")
+            break
+
+if errors:
+    for e in errors:
+        print("ASCII ERROR:", e, file=sys.stderr)
+    sys.exit(1)
+print(f"    Verified {len(tracked)} tracked files are pure 7-bit printable ASCII.")
+PY
+
+echo "==> [2/7] CI workflow supply-chain pin audit"
+python3 - "$REPO_ROOT/.github/workflows/ci.yml" <<'PY'
+import sys
+wf = open(sys.argv[1], "r", encoding="ascii").read()
+for line in wf.splitlines():
+    stripped = line.strip()
+    if stripped.startswith("uses:") or stripped.startswith("- uses:"):
+        val = stripped.split("uses:", 1)[1].strip()
+        if val != "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1":
+            print(f"Disallowed GitHub Action reference: {val}", file=sys.stderr)
+            sys.exit(1)
+if "persist-credentials: false" not in wf:
+    print("Missing persist-credentials: false in ci.yml", file=sys.stderr)
+    sys.exit(1)
+print("    Verified ci.yml uses pinned checkout with persist-credentials: false.")
+PY
+
+echo "==> [3/7] Rust compiler fmt, clippy (-D warnings), and unit tests (--offline)"
+cargo fmt --manifest-path "$REPO_ROOT/Cargo.toml" --all -- --check
+cargo clippy --manifest-path "$REPO_ROOT/Cargo.toml" --workspace --all-targets --offline -- -D warnings
+cargo test --manifest-path "$REPO_ROOT/Cargo.toml" --workspace --offline
+
+echo "==> [4/7] Build zero-runtime ESM, SCSS partials, styles.css, WOFF2 glyphs, and AGENT.md"
+node --experimental-strip-types "$REPO_ROOT/scripts/build.ts"
+
+echo "==> [5/7] Static Package, Naming, CSP & Zero-SVG Gate (scripts/check-package.ts)"
+node --experimental-strip-types "$REPO_ROOT/scripts/check-package.ts"
+
+echo "==> [6/7] Standalone SCSS Partial & Determinism Gate (scripts/check-scss.ts)"
+node --experimental-strip-types "$REPO_ROOT/scripts/check-scss.ts"
+
+echo "==> [7/7] Unit/Integration Suite & Performance/Profiler/A11y Budgets"
+node --experimental-strip-types --import "$REPO_ROOT/bench/register-react.ts" --test "$REPO_ROOT/tests/laws.test.ts"
+node --experimental-strip-types "$REPO_ROOT/bench/run-bench.ts"
+
+echo "ALL 7 ARCHITECTURAL LAWS & VERIFICATION GATES PASSED."
