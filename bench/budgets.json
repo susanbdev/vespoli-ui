@@ -1,0 +1,15 @@
+{
+  "stylesCssGzipMaxBytes": 6144,
+  "glyphFontMaxBytes": 2048,
+  "buttonJsGzipMaxBytes": 614,
+  "virtualSpacerCssMaxBytes": 600,
+  "agentMdMaxBytes": 3072,
+  "primitiveMountP95MaxMs": 1.5,
+  "table500RowSelectionMaxRerenders": 2,
+  "table500UnchangedRerenders": 0,
+  "canvas100kTransitionReactCommits": 0,
+  "canvas100kMinFps": 60,
+  "cspViolations": 0,
+  "a11yViolations": 0,
+  "svgCount": 0
+}

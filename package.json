@@ -1,0 +1,22 @@
+{
+  "name": "vespoli-ui-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/styled",
+    "packages/styled-compiler",
+    "packages/ui"
+  ],
+  "scripts": {
+    "build": "node --experimental-strip-types scripts/build.ts",
+    "check:package": "node --experimental-strip-types scripts/check-package.ts",
+    "check:scss": "node --experimental-strip-types scripts/check-scss.ts",
+    "bench": "node --experimental-strip-types bench/run-bench.ts",
+    "test": "node --experimental-strip-types --import ./bench/register-react.ts --test tests/*.test.ts",
+    "check": "./scripts/check"
+  },
+  "engines": {
+    "node": ">=22.6.0"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "@vespoli/styled-compiler",
+  "version": "1.0.0",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./ast-pass": "./src/ast-pass.ts",
+    "./scss-emitter": "./src/scss-emitter.ts",
+    "./css-builder": "./src/css-builder.ts",
+    "./vite": "./src/vite.ts",
+    "./esbuild": "./src/esbuild.ts"
+  }
+}

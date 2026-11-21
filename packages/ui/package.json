@@ -1,0 +1,46 @@
+{
+  "name": "vespoli-ui",
+  "version": "1.0.0",
+  "description": "Dumb, stateless, zero-runtime-overhead React UI primitives, static SCSS system, and OffscreenCanvas telemetry engine.",
+  "type": "module",
+  "main": "./dist/esm/index.js",
+  "types": "./src/index.ts",
+  "sideEffects": [
+    "*.css",
+    "*.scss"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/esm/index.js"
+    },
+    "./styles.css": "./dist/styles.css",
+    "./css/*": "./dist/css/*.css",
+    "./scss": "./dist/scss/index.scss",
+    "./scss/components/*": "./dist/scss/components/_*.scss",
+    "./fonts/*": "./dist/fonts/*",
+    "./REFERENCE.md": "./REFERENCE.md",
+    "./manifest.json": "./dist/manifest.json",
+    "./transitions": {
+      "types": "./src/transitions.ts",
+      "default": "./dist/esm/transitions.js"
+    },
+    "./a11y": {
+      "types": "./src/a11y.ts",
+      "default": "./dist/esm/a11y.js"
+    },
+    "./canvas": {
+      "types": "./src/canvas.tsx",
+      "default": "./dist/esm/canvas.js"
+    },
+    "./*": "./dist/esm/subpaths/*.js"
+  },
+  "files": [
+    "dist",
+    "src",
+    "REFERENCE.md"
+  ],
+  "peerDependencies": {
+    "react": "^18.3.0 || ^19.0.0"
+  }
+}
