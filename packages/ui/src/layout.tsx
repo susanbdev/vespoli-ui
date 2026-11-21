@@ -196,7 +196,20 @@ const HeadingBox = styled.h2<HeadingStyleProps>`
   ${p => p.size === "xl" && css` font-size: 1.75rem; `}
 `;
 
-export interface HeadingProps extends ComponentPropsWithRef<"h2"> {
+const HEADING_SIZE_MAP: Readonly<Record<string, string>> = Object.freeze({
+  __proto__: null,
+  xs: "vui-Heading--size-xs",
+  sm: "vui-Heading--size-sm",
+  md: "vui-Heading--size-md",
+  lg: "vui-Heading--size-lg",
+  xl: "vui-Heading--size-xl"
+} as unknown as Record<string, string>);
+
+export interface HeadingProps
+  extends Omit<
+    ComponentPropsWithRef<"h2">,
+    "style" | "dangerouslySetInnerHTML"
+  > {
   level?: HeadingRank;
   size?: HeadingScale;
 }
@@ -205,16 +218,26 @@ export function Heading({
   level = 2,
   size = "md",
   className,
+  style: _style,
+  dangerouslySetInnerHTML: _dangerouslySetInnerHTML,
   ...props
 }: HeadingProps) {
+  const sizeCls = Object.hasOwn(HEADING_SIZE_MAP, String(size))
+    ? HEADING_SIZE_MAP[String(size)]!
+    : HEADING_SIZE_MAP.md!;
   const cls =
-    `vui-Heading vui-Heading--size-${size}` + (className ? " " + className : "");
-  if (level === 1) return <h1 className={cls} {...props} />;
-  if (level === 3) return <h3 className={cls} {...props} />;
-  if (level === 4) return <h4 className={cls} {...props} />;
-  if (level === 5) return <h5 className={cls} {...props} />;
-  if (level === 6) return <h6 className={cls} {...props} />;
-  return <HeadingBox className={`vui-Heading--size-${size}` + (className ? " " + className : "")} {...props} />;
+    "vui-Heading " + sizeCls + (className ? " " + className : "");
+  if (level === 1) return <h1 {...props} className={cls} />;
+  if (level === 3) return <h3 {...props} className={cls} />;
+  if (level === 4) return <h4 {...props} className={cls} />;
+  if (level === 5) return <h5 {...props} className={cls} />;
+  if (level === 6) return <h6 {...props} className={cls} />;
+  return (
+    <HeadingBox
+      {...props}
+      className={sizeCls + (className ? " " + className : "")}
+    />
+  );
 }
 
 export const Breadcrumbs = styled.nav.attrs({ "aria-label": "Breadcrumb" })`
@@ -243,27 +266,69 @@ const CrumbBox = styled.a`
   }
 `;
 
-export interface CrumbProps extends ComponentPropsWithRef<"a"> {
+export function sanitizeHref(rawHref: string | undefined): string | undefined {
+  if (typeof rawHref !== "string") return undefined;
+  let cleaned = "";
+  for (let i = 0; i < rawHref.length; i += 1) {
+    const code = rawHref.charCodeAt(i);
+    if (code <= 32 || code === 127) continue;
+    cleaned += rawHref[i];
+  }
+  if (cleaned.length === 0) return undefined;
+  if (cleaned.startsWith("/")) {
+    if (cleaned.startsWith("//") || cleaned.startsWith("/\\")) {
+      return undefined;
+    }
+    return cleaned;
+  }
+  if (cleaned.startsWith("#") || cleaned.startsWith("?")) {
+    return cleaned;
+  }
+  const lower = cleaned.toLowerCase();
+  if (
+    lower.startsWith("https:") ||
+    lower.startsWith("http:") ||
+    lower.startsWith("mailto:")
+  ) {
+    return cleaned;
+  }
+  return undefined;
+}
+
+export interface CrumbProps
+  extends Omit<ComponentPropsWithRef<"a">, "style" | "dangerouslySetInnerHTML"> {
   current?: boolean;
 }
 
-export function Crumb({ current = false, href, className, ...props }: CrumbProps) {
+export function Crumb({
+  current = false,
+  href,
+  className,
+  style: _style,
+  dangerouslySetInnerHTML: _dangerouslySetInnerHTML,
+  ...props
+}: CrumbProps) {
   const ariaCurrent = current ? "page" : undefined;
-  if (!href) {
+  const safeHref = sanitizeHref(href);
+  if (!safeHref) {
+    const spanProps = props as Omit<
+      ComponentPropsWithRef<"span">,
+      "style" | "dangerouslySetInnerHTML"
+    >;
     return (
       <span
+        {...spanProps}
         aria-current={ariaCurrent}
         className={"vui-Crumb" + (className ? " " + className : "")}
-        {...(props as ComponentPropsWithRef<"span">)}
       />
     );
   }
   return (
     <CrumbBox
-      href={href}
+      {...props}
+      href={safeHref}
       aria-current={ariaCurrent}
       className={className}
-      {...props}
     />
   );
 }

@@ -125,6 +125,12 @@ export class SimDocument {
   private listeners = new Map<string, Set<(ev: Record<string, unknown>) => void>>();
 
   public readonly defaultView = {
+    location: {
+      href: "https://vespoli.local/app",
+      origin: "https://vespoli.local",
+      protocol: "https:",
+      host: "vespoli.local"
+    },
     matchMedia: (query: string) => ({
       matches:
         query.includes("prefers-reduced-motion: reduce") && this.reducedMotion
@@ -382,9 +388,15 @@ export function createTestRoot(options: { strictMode?: boolean } = {}): TestRoot
     unmount(): void {
       if (rootFiber) {
         const all = collectFibers(rootFiber);
+        for (const f of all) {
+          if (f.dom) {
+            f.dom.isConnected = false;
+            f.dom.parentElement = null;
+          }
+        }
+        container.children = [];
         cleanupEffects(all);
         rootFiber = null;
-        container.children = [];
       }
     }
   };
@@ -591,6 +603,14 @@ function applyDomProps(dom: SimElement, props: Record<string, unknown>): void {
 
   for (const [k, v] of Object.entries(props)) {
     if (k === "children" || k === "ref" || v === undefined || v === null) {
+      continue;
+    }
+    if (k === "dangerouslySetInnerHTML") {
+      dom.ownerDocument.cspViolations.push({
+        blockedDirective: "script-src 'self'",
+        detail: `dangerouslySetInnerHTML on <${dom.tagName.toLowerCase()}>`
+      });
+      dom.setAttribute("dangerouslysetinnerhtml", "[blocked]");
       continue;
     }
     if (k.startsWith("on") && typeof v === "function") {

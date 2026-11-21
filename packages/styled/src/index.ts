@@ -16,10 +16,15 @@ export type StyleChunk<P = Record<string, unknown>> =
   | ((props: P) => string | false | null | undefined)
   | StyledComponent<ElementType, Record<string, unknown>>;
 
+export type SafeDomProps<T extends ElementType> = Omit<
+  ComponentPropsWithRef<T>,
+  "style" | "dangerouslySetInnerHTML"
+>;
+
 export type StyledComponent<
   T extends ElementType,
   S extends object = Record<never, never>
-> = ((props: Omit<ComponentPropsWithRef<T>, keyof S> & S) => JSX.Element) & {
+> = ((props: Omit<SafeDomProps<T>, keyof S> & S) => JSX.Element) & {
   readonly vuiSelector?: string;
 };
 
@@ -28,7 +33,7 @@ export interface StyledTag<T extends ElementType> {
     strings: TemplateStringsArray,
     ...values: ReadonlyArray<StyleChunk<S>>
   ): StyledComponent<T, S>;
-  attrs<A extends Partial<ComponentPropsWithRef<T>>>(
+  attrs<A extends Partial<SafeDomProps<T>>>(
     defaultAttrs: A
   ): <S extends object = Record<never, never>>(
     strings: TemplateStringsArray,
@@ -92,7 +97,9 @@ export type StyledFactory = {
   ): <S extends object = Record<never, never>>(
     strings: TemplateStringsArray,
     ...values: ReadonlyArray<StyleChunk<S>>
-  ) => (props: Omit<BaseProps, keyof S> & S) => JSX.Element;
+  ) => (
+    props: Omit<BaseProps, keyof S | "style" | "dangerouslySetInnerHTML"> & S
+  ) => JSX.Element;
 } & {
   readonly [K in HtmlTagName]: StyledTag<K>;
 };

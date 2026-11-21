@@ -84,6 +84,47 @@ const BREAKPOINT_MIN: Readonly<Record<string, string>> = {
   xxl: "1400px"
 };
 
+function lineAtOffset(source: string, idx: number): number {
+  let line = 1;
+  const end = Math.min(idx, source.length);
+  for (let i = 0; i < end; i += 1) {
+    if (source.charCodeAt(i) === 10) line += 1;
+  }
+  return line;
+}
+
+function findJsxOpeningTagEnd(source: string, startIdx: number): number {
+  let braceDepth = 0;
+  let quote: string | null = null;
+  for (let i = startIdx; i < source.length; i += 1) {
+    const ch = source[i]!;
+    if (quote) {
+      if (ch === quote) {
+        let bs = 0;
+        let k = i;
+        while (k > 0 && source[k - 1] === "\\") {
+          bs += 1;
+          k -= 1;
+        }
+        if ((bs & 1) === 0) quote = null;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      quote = ch;
+      continue;
+    }
+    if (ch === "{") {
+      braceDepth += 1;
+    } else if (ch === "}") {
+      braceDepth = Math.max(0, braceDepth - 1);
+    } else if (ch === ">" && braceDepth === 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 export function auditSourceLaws(
   source: string,
   options: { isUiPackage?: boolean; filePath?: string } = {}
@@ -95,16 +136,34 @@ export function auditSourceLaws(
   const vecExt = "." + "svg";
   const vecMime = "image/" + "svg+xml";
 
+  const fp = options.filePath ?? "";
+  const allowDomSyncEffect =
+    fp === "overlay" ||
+    fp === "canvas" ||
+    fp.endsWith("/overlay.tsx") ||
+    fp.endsWith("\\overlay.tsx") ||
+    fp === "overlay.tsx" ||
+    fp.endsWith("/canvas.tsx") ||
+    fp.endsWith("\\canvas.tsx") ||
+    fp === "canvas.tsx";
+
   const bannedHooks = [
     "useState",
     "useReducer",
     "useContext",
     "createContext",
     "useSyncExternalStore",
+    "useLayoutEffect",
+    "useInsertionEffect",
+    "useRef",
+    "useImperativeHandle",
     "XMLHttpRequest",
     "WebSocket",
+    "EventSource",
+    "BroadcastChannel",
     "setTimeout",
-    "setInterval"
+    "setInterval",
+    "sendBeacon"
   ];
   const bannedAliases = ["onPress", "isDisabled", "onValueChange", "asChild"];
   const bannedSuffixes = /(?:[A-Z][A-Za-z0-9]*(?:Wrapper|Root|Contract|Manager|Helper|Util|Check)|[A-Z][A-Za-z0-9]+Container)\b/;
@@ -119,8 +178,8 @@ export function auditSourceLaws(
         diagnostics.push({
           code: "VUI009",
           line: lineNo,
-          message: `Non-ASCII character (0x${code.toString(16)}) in source.`,
-          fix: "Replace non-ASCII punctuation or symbols with 7-bit printable ASCII."
+          message: `Non-ASCII or disallowed control character (0x${code.toString(16)}) in source.`,
+          fix: "Replace non-ASCII punctuation or CR bytes with 7-bit printable LF ASCII."
         });
         break;
       }
@@ -143,14 +202,13 @@ export function auditSourceLaws(
 
     if (options.isUiPackage) {
       if (
-        /\bstyle\s*=\s*\{/.test(line) ||
-        /\bstyle\s*=\s*["']/.test(line) ||
-        /\.setAttribute\(\s*["']style["']/.test(line)
+        /\.\s*style\s*(?:\.|\[)/.test(line) ||
+        /\.setAttribute\(\s*["'`]style["'`]/.test(line)
       ) {
         diagnostics.push({
           code: "VUI003",
           line: lineNo,
-          message: "Disallowed inline style attribute detected (Law 4 strict style-src 'self' CSP).",
+          message: "Disallowed DOM .style mutation or setAttribute('style') detected (Law 4).",
           fix: "Map visual state to typed finite style props or data-* attributes in static SCSS."
         });
       }
@@ -167,11 +225,23 @@ export function auditSourceLaws(
         }
       }
 
-      if (/\bfetch\s*\(/.test(line)) {
+      if (!allowDomSyncEffect && /\buseEffect\b/.test(line)) {
         diagnostics.push({
           code: "VUI002",
           line: lineNo,
-          message: "Disallowed network fetch() inside stateless UI primitive (Law 1).",
+          message: "Disallowed 'useEffect' in stateless UI primitive (Law 1).",
+          fix: "Keep primitives pure 1-in -> 1-out functions without side effects."
+        });
+      }
+
+      if (
+        /\[\s*["'`](?:fetch|sendBeacon)["'`]\s*\]/.test(line) ||
+        /\.\s*(?:fetch|sendBeacon)\b/.test(line)
+      ) {
+        diagnostics.push({
+          code: "VUI002",
+          line: lineNo,
+          message: "Disallowed network API property lookup in stateless UI primitive (Law 1).",
           fix: "Perform data fetching outside vespoli-ui and pass typed props/typed arrays."
         });
       }
@@ -205,19 +275,47 @@ export function auditSourceLaws(
         });
       }
     }
+  }
 
-    const iconBtnTags = line.match(/<IconButton\b[^>]*>/g);
-    if (iconBtnTags) {
-      for (const tag of iconBtnTags) {
-        if (!tag.includes("aria-label") && !tag.includes("{...")) {
-          diagnostics.push({
-            code: "VUI004",
-            line: lineNo,
-            message: "Missing required 'aria-label' on <IconButton>.",
-            fix: "Provide an explicit accessible label: <IconButton aria-label=\"Close\" />."
-          });
-        }
+  if (options.isUiPackage) {
+    const fetchRe = /\bfetch\s*(?:\(|`)/g;
+    let fm: RegExpExecArray | null;
+    while ((fm = fetchRe.exec(source)) !== null) {
+      diagnostics.push({
+        code: "VUI002",
+        line: lineAtOffset(source, fm.index),
+        message: "Disallowed network fetch() inside stateless UI primitive (Law 1).",
+        fix: "Perform data fetching outside vespoli-ui and pass typed props/typed arrays."
+      });
+    }
+
+    const styleAttrRe = /(?<![\w-])(?:style|dangerouslySetInnerHTML)\s*=\s*(?:\{|["'`])/g;
+    let sm: RegExpExecArray | null;
+    while ((sm = styleAttrRe.exec(source)) !== null) {
+      diagnostics.push({
+        code: "VUI003",
+        line: lineAtOffset(source, sm.index),
+        message: "Disallowed inline style or dangerouslySetInnerHTML attribute detected (Law 4).",
+        fix: "Map visual state to typed finite style props or data-* attributes in static SCSS."
+      });
+    }
+  }
+
+  const iconOpenRe = /<IconButton(?=[\s/>])/g;
+  let im: RegExpExecArray | null;
+  while ((im = iconOpenRe.exec(source)) !== null) {
+    const endIdx = findJsxOpeningTagEnd(source, im.index + "<IconButton".length);
+    if (endIdx >= 0) {
+      const fullTag = source.slice(im.index, endIdx + 1);
+      if (!fullTag.includes("aria-label") && !fullTag.includes("{...")) {
+        diagnostics.push({
+          code: "VUI004",
+          line: lineAtOffset(source, im.index),
+          message: "Missing required 'aria-label' on <IconButton>.",
+          fix: "Provide an explicit accessible label: <IconButton aria-label=\"Close\" />."
+        });
       }
+      iconOpenRe.lastIndex = endIdx + 1;
     }
   }
 
@@ -306,10 +404,14 @@ export function compileModule(
   moduleName: string,
   options: {
     isUiPackage?: boolean;
+    filePath?: string;
     configOverrides?: ReadonlyMap<string, string>;
   } = {}
 ): CompiledModule {
-  const diagnostics = auditSourceLaws(source, { isUiPackage: options.isUiPackage });
+  const diagnostics = auditSourceLaws(source, {
+    isUiPackage: options.isUiPackage,
+    filePath: options.filePath ?? moduleName
+  });
   const typeDomains = parseTypeDomains(source);
   const components: ComponentAst[] = [];
   const localTags = new Map<
@@ -363,7 +465,22 @@ export function compileModule(
       "div";
 
     const attrs = attrsRaw ? parseSimpleObjectLiteral(attrsRaw) : {};
-    const rawProps = typeParam ? typeDomains.get(typeParam) ?? [] : [];
+    const rawProps = (typeParam ? typeDomains.get(typeParam) ?? [] : []).map((pd) => {
+      if (pd.kind !== "union") return pd;
+      const safeVals: string[] = [];
+      for (const v of pd.values) {
+        if (!/^[A-Za-z0-9_-]+$/.test(v)) {
+          diagnostics.push({
+            code: "VUI001",
+            message: `Unsafe union prop literal '${v}' on ${compName}.${pd.name}; must match /^[A-Za-z0-9_-]+$/.`,
+            fix: "Restrict style union values to alphanumeric, '-', and '_' characters."
+          });
+        } else {
+          safeVals.push(v);
+        }
+      }
+      return { ...pd, values: safeVals };
+    });
 
     const parsed = evaluateStyledTemplate(
       compName,
@@ -539,7 +656,13 @@ function evaluateStyledTemplate(
       const rawVal = (unionPred[3] ?? "").replace(/^['"]|['"]$/g, "");
       const bodyRaw = unionPred[4] ?? "";
       const domain = propMap.get(propName);
-      if (!domain || domain.values.length === 0 || !domain.values.includes(rawVal)) {
+      if (!/^[A-Za-z0-9_-]+$/.test(rawVal)) {
+        diagnostics.push({
+          code: "VUI001",
+          message: `Unsafe union matchValue '${rawVal}' on ${compName}.${propName}; must match /^[A-Za-z0-9_-]+$/.`,
+          fix: "Use only safe alphanumeric, '-', or '_' tokens in style union predicates."
+        });
+      } else if (!domain || domain.values.length === 0 || !domain.values.includes(rawVal)) {
         diagnostics.push({
           code: "VUI001",
           message: `Style prop '${propName}' on ${compName} must have a finite union type including '${rawVal}'.`,
@@ -783,14 +906,16 @@ function generateComponentTs(
           entries.push(`  ${JSON.stringify(val)}: ""`);
         }
       }
-      mapDecls.push(`const ${mapIdent}: Record<string, string> = {\n${entries.join(",\n")}\n};`);
+      mapDecls.push(
+        `const ${mapIdent}: Readonly<Record<string, string>> = Object.freeze({\n  __proto__: null,\n${entries.join(",\n")}\n} as unknown as Record<string, string>);`
+      );
       const defaultUnion =
         prop.name === "variant" && prop.values.includes("secondary")
           ? ` = "secondary"`
           : "";
       paramEntries.push(`${prop.name}${defaultUnion}`);
       classExprs.push(
-        `(${prop.name} !== undefined ? (${mapIdent}[String(${prop.name})] || "") : "")`
+        `(${prop.name} !== undefined && Object.hasOwn(${mapIdent}, String(${prop.name})) ? ${mapIdent}[String(${prop.name})] : "")`
       );
     }
   }
@@ -804,10 +929,14 @@ function generateComponentTs(
   if (hasLoading && isButtonTag) {
     paramEntries.push("disabled");
   }
-  paramEntries.push("className");
-  paramEntries.push("...props");
+  paramEntries.push(
+    "className",
+    "style: _style",
+    "dangerouslySetInnerHTML: _dangerouslySetInnerHTML",
+    "...props"
+  );
 
-  const jsxProps: string[] = [];
+  const jsxProps: string[] = ["    ...props"];
   for (const [attrKey, attrVal] of Object.entries(mergedAttrs)) {
     if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(attrKey)) {
       jsxProps.push(`    ${attrKey}`);
@@ -834,10 +963,9 @@ function generateComponentTs(
   ].join(" + ");
 
   jsxProps.push(`    className: ${fullClassExpr}`);
-  jsxProps.push("    ...props");
 
   const prefix = mapDecls.length > 0 ? mapDecls.join("\n") + "\n" : "";
-  return `${prefix}export function ${comp.name}({ ${paramEntries.join(", ")} }: Record<string, any>) {\n  return _jsx(${JSON.stringify(comp.tag)}, {\n${jsxProps.join(",\n")}\n  });\n}\n`;
+  return `${prefix}export function ${comp.name}({ ${paramEntries.join(", ")} }: Omit<Record<string, any>, "style" | "dangerouslySetInnerHTML">) {\n  return _jsx(${JSON.stringify(comp.tag)}, {\n${jsxProps.join(",\n")}\n  });\n}\n`;
 }
 
 function mergePropDomains(
@@ -1185,17 +1313,32 @@ function formatJsxCall(
   return `${fnName}(${targetExpr}, ${propsObj})`;
 }
 
+function isUnescapedAt(code: string, idx: number): boolean {
+  let bs = 0;
+  let k = idx;
+  while (k > 0 && code[k - 1] === "\\") {
+    bs += 1;
+    k -= 1;
+  }
+  return (bs & 1) === 0;
+}
+
 function skipStringLiteral(code: string, startIdx: number): number {
   const quote = code[startIdx] ?? '"';
   let i = startIdx + 1;
   while (i < code.length) {
     const ch = code[i] ?? "";
-    if (quote === "`" && ch === "$" && code[i + 1] === "{") {
+    if (
+      quote === "`" &&
+      ch === "$" &&
+      code[i + 1] === "{" &&
+      isUnescapedAt(code, i)
+    ) {
       const end = findBalancedBrace(code, i + 1);
       i = end < 0 ? code.length : end + 1;
       continue;
     }
-    if (ch === quote && code[i - 1] !== "\\") {
+    if (ch === quote && isUnescapedAt(code, i)) {
       return i + 1;
     }
     i += 1;

@@ -317,7 +317,11 @@ const SegmentBox = styled.button.attrs({ type: "button", role: "radio" })`
   }
 `;
 
-export interface SegmentProps extends ComponentPropsWithRef<"button"> {
+export interface SegmentProps
+  extends Omit<
+    ComponentPropsWithRef<"button">,
+    "style" | "dangerouslySetInnerHTML"
+  > {
   active?: boolean;
   compact?: boolean;
 }
@@ -326,6 +330,8 @@ export function Segment({
   active = false,
   compact = false,
   className,
+  style: _style,
+  dangerouslySetInnerHTML: _dangerouslySetInnerHTML,
   ...props
 }: SegmentProps) {
   const cls =
@@ -333,10 +339,10 @@ export function Segment({
     (className ? (compact ? " " : "") + className : "");
   return (
     <SegmentBox
+      {...props}
       aria-checked={active}
       tabIndex={active ? 0 : -1}
       className={cls || undefined}
-      {...props}
     />
   );
 }
@@ -368,17 +374,27 @@ const TabBox = styled.button.attrs({ type: "button", role: "tab" })`
   }
 `;
 
-export interface TabProps extends ComponentPropsWithRef<"button"> {
+export interface TabProps
+  extends Omit<
+    ComponentPropsWithRef<"button">,
+    "style" | "dangerouslySetInnerHTML"
+  > {
   active?: boolean;
 }
 
-export function Tab({ active = false, className, ...props }: TabProps) {
+export function Tab({
+  active = false,
+  className,
+  style: _style,
+  dangerouslySetInnerHTML: _dangerouslySetInnerHTML,
+  ...props
+}: TabProps) {
   return (
     <TabBox
+      {...props}
       aria-selected={active}
       tabIndex={active ? 0 : -1}
       className={className}
-      {...props}
     />
   );
 }
@@ -397,7 +413,11 @@ const PaginationBox = styled.nav.attrs({ "aria-label": "Pagination" })`
   color: ${t.color.muted};
 `;
 
-export interface PaginationProps extends ComponentPropsWithRef<"nav"> {
+export interface PaginationProps
+  extends Omit<
+    ComponentPropsWithRef<"nav">,
+    "style" | "dangerouslySetInnerHTML"
+  > {
   hasPrev?: boolean;
   hasNext?: boolean;
   onPrev?: () => void;
@@ -413,20 +433,22 @@ export function Pagination({
   summary,
   children,
   className,
+  style: _style,
+  dangerouslySetInnerHTML: _dangerouslySetInnerHTML,
   ...props
 }: PaginationProps) {
   if (children !== undefined) {
     return (
-      <PaginationBox className={className} {...props}>
+      <PaginationBox {...props} className={className}>
         {children}
       </PaginationBox>
     );
   }
   if (!onPrev && !onNext && !summary) {
-    return <PaginationBox className={className} {...props} />;
+    return <PaginationBox {...props} className={className} />;
   }
   return (
-    <PaginationBox className={className} {...props}>
+    <PaginationBox {...props} className={className}>
       <button
         type="button"
         className="vui-Button vui-Button--compact"

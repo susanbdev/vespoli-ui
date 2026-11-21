@@ -25,7 +25,11 @@ const TableBodyBox = styled.tbody`
   }
 `;
 
-export interface TableBodyProps extends ComponentPropsWithRef<"tbody"> {
+export interface TableBodyProps
+  extends Omit<
+    ComponentPropsWithRef<"tbody">,
+    "style" | "dangerouslySetInnerHTML"
+  > {
   onRowActivate?: (rowKey: string, event: MouseEvent<HTMLTableSectionElement> | KeyboardEvent<HTMLTableSectionElement>) => void;
 }
 
@@ -34,6 +38,8 @@ export function TableBody({
   onClick,
   onKeyDown,
   className,
+  style: _style,
+  dangerouslySetInnerHTML: _dangerouslySetInnerHTML,
   ...props
 }: TableBodyProps) {
   const handleClick = (event: MouseEvent<HTMLTableSectionElement>) => {
@@ -61,10 +67,10 @@ export function TableBody({
 
   return (
     <TableBodyBox
+      {...props}
       onClick={onRowActivate ? handleClick : onClick}
       onKeyDown={onRowActivate ? handleKeyDown : onKeyDown}
       className={className}
-      {...props}
     />
   );
 }
@@ -81,7 +87,11 @@ const TableRowBox = styled.tr`
   }
 `;
 
-export interface TableRowProps extends ComponentPropsWithRef<"tr"> {
+export interface TableRowProps
+  extends Omit<
+    ComponentPropsWithRef<"tr">,
+    "style" | "dangerouslySetInnerHTML"
+  > {
   rowKey?: string;
   selected?: boolean;
 }
@@ -90,14 +100,16 @@ function renderTableRow({
   rowKey,
   selected = false,
   className,
+  style: _style,
+  dangerouslySetInnerHTML: _dangerouslySetInnerHTML,
   ...props
 }: TableRowProps) {
   return (
     <TableRowBox
+      {...props}
       data-row-key={rowKey}
       aria-selected={selected ? true : undefined}
       className={className}
-      {...props}
     />
   );
 }
@@ -198,22 +210,35 @@ const VirtualSpacerBox = styled.tr.attrs({ "aria-hidden": "true" })`
   pointer-events: none;
 `;
 
-export interface VirtualSpacerProps extends ComponentPropsWithRef<"tr"> {
+export interface VirtualSpacerProps
+  extends Omit<
+    ComponentPropsWithRef<"tr">,
+    "style" | "dangerouslySetInnerHTML"
+  > {
   bit: SpacerBit;
 }
 
-export function VirtualSpacer({ bit, className, ...props }: VirtualSpacerProps) {
+export function VirtualSpacer({
+  bit,
+  className,
+  style: _style,
+  dangerouslySetInnerHTML: _dangerouslySetInnerHTML,
+  ...props
+}: VirtualSpacerProps) {
+  const safeBit =
+    Number.isInteger(bit) && bit >= 0 && bit <= 17 ? bit : 0;
   return (
     <VirtualSpacerBox
-      data-bit={String(bit)}
-      className={className}
       {...props}
+      data-bit={String(safeBit)}
+      className={className}
     />
   );
 }
 
 export function decomposeOffset(rowCount: number): SpacerBit[] {
-  const clamped = Math.max(0, Math.min(262143, Math.floor(rowCount)));
+  const safeCount = Number.isFinite(rowCount) ? rowCount : 0;
+  const clamped = Math.max(0, Math.min(262143, Math.floor(safeCount)));
   const bits: SpacerBit[] = [];
   for (let b = 0; b <= 17; b += 1) {
     if ((clamped & (1 << b)) !== 0) {
@@ -241,7 +266,11 @@ const TreeRowBox = styled.tr.attrs({ role: "row" })`
 
 export type TreeDepth = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
-export interface TreeRowProps extends ComponentPropsWithRef<"tr"> {
+export interface TreeRowProps
+  extends Omit<
+    ComponentPropsWithRef<"tr">,
+    "style" | "dangerouslySetInnerHTML"
+  > {
   level: TreeDepth;
   expanded?: boolean;
 }
@@ -250,15 +279,19 @@ export function TreeRow({
   level,
   expanded,
   className,
+  style: _style,
+  dangerouslySetInnerHTML: _dangerouslySetInnerHTML,
   ...props
 }: TreeRowProps) {
+  const safeLevel =
+    Number.isInteger(level) && level >= 1 && level <= 8 ? level : 1;
   return (
     <TreeRowBox
-      aria-level={level}
-      aria-expanded={expanded}
-      data-level={String(level)}
-      className={className}
       {...props}
+      aria-level={safeLevel}
+      aria-expanded={expanded}
+      data-level={String(safeLevel)}
+      className={className}
     />
   );
 }

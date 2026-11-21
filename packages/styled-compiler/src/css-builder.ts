@@ -28,7 +28,21 @@ export interface ManifestDoc {
 
 export function ensureRustCompiler(): string {
   const debugBin = path.join(REPO_ROOT, "target", "debug", "vui-compile");
-  if (!fs.existsSync(debugBin)) {
+  const rustSrcDir = path.join(REPO_ROOT, "crates", "compiler", "src");
+  let needsBuild = !fs.existsSync(debugBin);
+  if (!needsBuild && fs.existsSync(rustSrcDir)) {
+    const binMtime = fs.statSync(debugBin).mtimeMs;
+    for (const entry of fs.readdirSync(rustSrcDir)) {
+      if (entry.endsWith(".rs")) {
+        const srcMtime = fs.statSync(path.join(rustSrcDir, entry)).mtimeMs;
+        if (srcMtime > binMtime) {
+          needsBuild = true;
+          break;
+        }
+      }
+    }
+  }
+  if (needsBuild) {
     execFileSync(
       "cargo",
       ["build", "--manifest-path", path.join(REPO_ROOT, "Cargo.toml"), "-p", "compiler", "--offline"],
@@ -42,9 +56,21 @@ export function ensureRustCompiler(): string {
   return debugBin;
 }
 
-export function compileScssFile(scssPath: string, minify = true): string {
+export function compileScssFile(
+  scssPath: string,
+  minify = true,
+  baseDir?: string
+): string {
   const bin = ensureRustCompiler();
+  const resolvedScss = path.resolve(scssPath);
+  const pkgScssRoot = path.join(REPO_ROOT, "dist", "scss");
+  const effectiveBase =
+    baseDir ??
+    (resolvedScss.startsWith(pkgScssRoot + path.sep) ? pkgScssRoot : undefined);
   const args = ["scss", scssPath];
+  if (effectiveBase) {
+    args.push("--base", effectiveBase);
+  }
   if (minify) args.push("--minify");
   return execFileSync(bin, args, {
     cwd: REPO_ROOT,
@@ -164,10 +190,10 @@ export function buildAgentManifest(
     })
     .join("; ");
 
-  const agentMarkdown = `# vespoli-ui Agent Reference (v1.0)
+  const referenceMarkdown = `# vespoli-ui API Reference (v1.0)
 
 Imports: \`import { Button, Container, Row, Col, Dialog, transitionTo } from 'vespoli-ui'\` + \`import 'vespoli-ui/styles.css'\`.
-Rules: 0 providers, native HTML props (\`onClick\`, \`disabled\`, \`open\`, \`onClose\`), 0 inline \`style\`, 0 vector tags, \`<IconButton aria-label="...">\` required.
+Rules: 0 providers, native HTML props (\`onClick\`, \`disabled\`, \`open\`, \`onClose\`), 0 inline \`style\`, 0 \`dangerouslySetInnerHTML\`, 0 vector tags, \`<IconButton aria-label="...">\` required.
 Helpers: \`transitionTo(fn, { direction? })\`, \`trackOrigin(doc?)\`, \`moveFocus(el, idx)\`, \`decimateMinMax(f32, widthPx)\`.
 Layers: \`@layer vui.reset, vui.tokens, vui.grid, vui.components, vui.transitions, vui.utilities;\`
 SCSS: \`@use 'vespoli-ui/scss' with ($ButtonPaddingX: 10px, $color-accent: #38bdf8);\`
@@ -176,5 +202,5 @@ SCSS: \`@use 'vespoli-ui/scss' with ($ButtonPaddingX: 10px, $color-accent: #38bd
 ${rows}
 `;
 
-  return { manifest, agentMarkdown };
+  return { manifest, agentMarkdown: referenceMarkdown };
 }

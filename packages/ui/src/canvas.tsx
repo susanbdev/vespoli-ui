@@ -17,6 +17,8 @@ export interface CanvasPort {
 export interface WorkerChannel {
   readonly port: CanvasPort;
   readonly offscreen: unknown;
+  readonly owned: boolean;
+  dispose(): void;
 }
 
 export type TelemetrySource = Float32Array | Uint32Array | RingBuffer;
@@ -27,12 +29,24 @@ export interface BlitTarget {
   fillRect(x: number, y: number, w: number, h: number): void;
 }
 
+const MAX_RING_CAPACITY = 16_777_216;
+const MAX_CANVAS_WIDTH_PX = 16_384;
+
 // Law 1 & Law 7.1: Garbage-collected WeakMap ensuring React 19 <StrictMode> double-effect
 // invocation reuses the existing OffscreenCanvas WorkerChannel without throwing InvalidStateError.
 const canvasChannels = new WeakMap<HTMLCanvasElement, WorkerChannel>();
 
 export function createRingBuffer(capacity: number): RingBuffer {
-  const safeCap = Math.max(1, Math.floor(capacity));
+  if (
+    !Number.isFinite(capacity) ||
+    capacity < 1 ||
+    capacity > MAX_RING_CAPACITY
+  ) {
+    throw new RangeError(
+      `Invalid ring buffer capacity: expected finite number within 1..${MAX_RING_CAPACITY}`
+    );
+  }
+  const safeCap = Math.floor(capacity);
   return {
     data: new Float32Array(safeCap),
     capacity: safeCap,
@@ -46,8 +60,12 @@ export function appendSamples(
   incoming: ArrayLike<number>
 ): RingBuffer {
   const cap = ring.capacity;
+  if (!Number.isFinite(cap) || cap < 1 || cap > MAX_RING_CAPACITY) {
+    throw new RangeError("Invalid ring buffer state");
+  }
   for (let i = 0; i < incoming.length; i += 1) {
-    ring.data[ring.head] = incoming[i] ?? 0;
+    const sample = incoming[i] ?? 0;
+    ring.data[ring.head] = Number.isFinite(sample) ? sample : 0;
     ring.head = (ring.head + 1) % cap;
     if (ring.length < cap) {
       ring.length += 1;
@@ -58,6 +76,9 @@ export function appendSamples(
 
 export function readWindow(ring: RingBuffer, out?: Float32Array): Float32Array {
   const len = ring.length;
+  if (!Number.isFinite(len) || len < 0 || len > MAX_RING_CAPACITY) {
+    throw new RangeError("Invalid ring buffer window length");
+  }
   const target = out && out.length >= len ? out : new Float32Array(len);
   const start = ring.length < ring.capacity ? 0 : ring.head;
   for (let i = 0; i < len; i += 1) {
@@ -71,7 +92,21 @@ export function decimateMinMax(
   widthPx: number,
   outPairs?: Float32Array
 ): Float32Array {
-  const cols = Math.max(1, Math.floor(widthPx));
+  if (
+    !Number.isFinite(widthPx) ||
+    widthPx < 1 ||
+    widthPx > MAX_CANVAS_WIDTH_PX
+  ) {
+    throw new RangeError(
+      `Invalid widthPx: expected finite number within 1..${MAX_CANVAS_WIDTH_PX}`
+    );
+  }
+  if (samples.length > MAX_RING_CAPACITY) {
+    throw new RangeError(
+      `Sample buffer exceeds maximum length (${MAX_RING_CAPACITY})`
+    );
+  }
+  const cols = Math.floor(widthPx);
   const out =
     outPairs && outPairs.length >= cols * 2
       ? outPairs
@@ -89,6 +124,7 @@ export function decimateMinMax(
     let maxVal = -Infinity;
     for (let idx = start; idx < end && idx < n; idx += 1) {
       const val = samples[idx] ?? 0;
+      if (!Number.isFinite(val)) continue;
       if (val < minVal) minVal = val;
       if (val > maxVal) maxVal = val;
     }
@@ -105,8 +141,14 @@ export function interpolateColumns(
   progress: number,
   outPairs?: Float32Array
 ): Float32Array {
+  if (!Number.isFinite(progress)) {
+    throw new RangeError("Invalid interpolation progress: expected finite number");
+  }
   const alpha = progress <= 0 ? 0 : progress >= 1 ? 1 : progress;
   const count = Math.min(prevPairs.length, nextPairs.length);
+  if (count > MAX_CANVAS_WIDTH_PX * 2) {
+    throw new RangeError("Column pair count exceeds upper bound");
+  }
   const out =
     outPairs && outPairs.length >= count ? outPairs : new Float32Array(count);
   for (let i = 0; i < count; i += 1) {
@@ -126,7 +168,8 @@ export function blitScrollColumn(
 ): void {
   const w = canvasSurface.width;
   const h = canvasSurface.height;
-  const shift = Math.max(1, Math.floor(dx));
+  const safeDx = Number.isFinite(dx) ? dx : 1;
+  const shift = Math.max(1, Math.floor(safeDx));
   ctx.drawImage(canvasSurface, -shift, 0);
   ctx.clearRect(w - shift, 0, shift, h);
   const topY = Math.floor((1 - Math.max(minNorm, maxNorm)) * h);
@@ -143,12 +186,43 @@ function extractPalette(canvas: HTMLCanvasElement): Record<string, string> {
       border: "#262f3b"
     };
   }
-  const style = win.getComputedStyle(canvas);
+  const computed = win.getComputedStyle(canvas);
   return {
-    accent: style.getPropertyValue("--vui-color-accent").trim() || "#5eead4",
-    surface: style.getPropertyValue("--vui-color-surface").trim() || "#12161b",
-    border: style.getPropertyValue("--vui-color-border").trim() || "#262f3b"
+    accent: computed.getPropertyValue("--vui-color-accent").trim() || "#5eead4",
+    surface: computed.getPropertyValue("--vui-color-surface").trim() || "#12161b",
+    border: computed.getPropertyValue("--vui-color-border").trim() || "#262f3b"
   };
+}
+
+export function validateWorkerUrl(
+  workerUrl: string,
+  canvas: HTMLCanvasElement
+): string {
+  if (typeof workerUrl !== "string" || workerUrl.trim().length === 0) {
+    throw new Error("Invalid workerUrl: expected non-empty same-origin URL");
+  }
+  const docWin = canvas.ownerDocument?.defaultView as
+    | { location?: { href?: string; origin?: string } }
+    | null
+    | undefined;
+  const globalWin =
+    typeof globalThis !== "undefined"
+      ? (globalThis as { location?: { href?: string; origin?: string } })
+      : undefined;
+  const loc = docWin?.location ?? globalWin?.location;
+  if (!loc || typeof loc.href !== "string" || typeof loc.origin !== "string") {
+    throw new Error("Cannot validate workerUrl without window.location origin");
+  }
+  const parsed = new URL(workerUrl, loc.href);
+  if (
+    (parsed.protocol !== "https:" && parsed.protocol !== "http:") ||
+    parsed.origin !== loc.origin
+  ) {
+    throw new Error(
+      `Blocked cross-origin or disallowed-scheme workerUrl: ${parsed.protocol}//${parsed.host}`
+    );
+  }
+  return parsed.href;
 }
 
 export function connectCanvas(
@@ -163,11 +237,16 @@ export function connectCanvas(
   let channel = canvasChannels.get(canvas) ?? null;
 
   if (!channel) {
-    const port: CanvasPort | null =
-      options.worker ??
-      (options.workerUrl && typeof Worker === "function"
-        ? (new Worker(options.workerUrl, { type: "module" }) as unknown as CanvasPort)
-        : null);
+    let port: CanvasPort | null = options.worker ?? null;
+    let owned = false;
+
+    if (!port && options.workerUrl !== undefined) {
+      const validatedHref = validateWorkerUrl(options.workerUrl, canvas);
+      if (typeof Worker === "function") {
+        port = new Worker(validatedHref, { type: "module" }) as unknown as CanvasPort;
+        owned = true;
+      }
+    }
 
     const transferFn = (
       canvas as unknown as {
@@ -176,14 +255,31 @@ export function connectCanvas(
     ).transferControlToOffscreen;
 
     if (!port || typeof transferFn !== "function") {
+      if (owned) {
+        port?.terminate?.();
+      }
       return null;
     }
 
     const offscreen = transferFn.call(canvas);
-    channel = { port, offscreen };
+    let disposed = false;
+    const activePort = port;
+    channel = {
+      port: activePort,
+      offscreen,
+      owned,
+      dispose(): void {
+        if (disposed) return;
+        disposed = true;
+        canvasChannels.delete(canvas);
+        if (owned) {
+          activePort.terminate?.();
+        }
+      }
+    };
     canvasChannels.set(canvas, channel);
 
-    port.postMessage(
+    activePort.postMessage(
       {
         type: "init",
         mode: options.mode ?? "stage",
@@ -197,6 +293,11 @@ export function connectCanvas(
   if (options.buffer) {
     const samples =
       "data" in options.buffer ? readWindow(options.buffer) : options.buffer;
+    if (samples.length > MAX_RING_CAPACITY) {
+      throw new RangeError(
+        `Telemetry buffer exceeds maximum capacity (${MAX_RING_CAPACITY})`
+      );
+    }
     channel.port.postMessage({
       type: "data",
       mode: options.mode ?? "stage",
@@ -230,7 +331,11 @@ const CanvasStageBox = styled.canvas`
     repeating-linear-gradient(90deg, #93a0b012 0 1px, transparent 1px 40px);
 `;
 
-export interface CanvasStageProps extends ComponentPropsWithRef<"canvas"> {
+export interface CanvasStageProps
+  extends Omit<
+    ComponentPropsWithRef<"canvas">,
+    "style" | "dangerouslySetInnerHTML"
+  > {
   buffer?: TelemetrySource;
   workerUrl?: string;
   worker?: CanvasPort;
@@ -242,24 +347,36 @@ export function CanvasStage({
   worker,
   ref,
   className,
+  style: _style,
+  dangerouslySetInnerHTML: _dangerouslySetInnerHTML,
   ...props
 }: CanvasStageProps) {
   let canvasNode: HTMLCanvasElement | null = null;
 
   useEffect(() => {
-    if (canvasNode) {
-      connectCanvas(canvasNode, { worker, workerUrl, buffer, mode: "stage" });
-    }
+    const node = canvasNode;
+    if (!node) return;
+    const channel = connectCanvas(node, {
+      worker,
+      workerUrl,
+      buffer,
+      mode: "stage"
+    });
+    return () => {
+      if (!node.isConnected) {
+        channel?.dispose();
+      }
+    };
   }, [buffer, worker, workerUrl]);
 
   return (
     <CanvasStageBox
+      {...props}
       ref={(node: HTMLCanvasElement | null) => {
         canvasNode = node;
         assignCanvasRef(ref, node);
       }}
       className={className}
-      {...props}
     />
   );
 }
@@ -274,27 +391,43 @@ const RangeBarBox = styled.canvas.attrs({ "aria-hidden": "true" })`
   background-image: repeating-linear-gradient(90deg, #93a0b012 0 1px, transparent 1px 40px);
 `;
 
-export interface RangeBarProps extends ComponentPropsWithRef<"canvas"> {
+export interface RangeBarProps
+  extends Omit<
+    ComponentPropsWithRef<"canvas">,
+    "style" | "dangerouslySetInnerHTML"
+  > {
   buffer?: TelemetrySource;
 }
 
-export function RangeBar({ buffer, ref, className, ...props }: RangeBarProps) {
+export function RangeBar({
+  buffer,
+  ref,
+  className,
+  style: _style,
+  dangerouslySetInnerHTML: _dangerouslySetInnerHTML,
+  ...props
+}: RangeBarProps) {
   let canvasNode: HTMLCanvasElement | null = null;
 
   useEffect(() => {
-    if (canvasNode && buffer) {
-      connectCanvas(canvasNode, { buffer, mode: "range" });
-    }
+    const node = canvasNode;
+    if (!node || !buffer) return;
+    const channel = connectCanvas(node, { buffer, mode: "range" });
+    return () => {
+      if (!node.isConnected) {
+        channel?.dispose();
+      }
+    };
   }, [buffer]);
 
   return (
     <RangeBarBox
+      {...props}
       ref={(node: HTMLCanvasElement | null) => {
         canvasNode = node;
         assignCanvasRef(ref, node);
       }}
       className={className}
-      {...props}
     />
   );
 }
@@ -310,7 +443,11 @@ const HeatmapCanvasBox = styled.canvas`
     repeating-linear-gradient(90deg, #93a0b012 0 1px, transparent 1px 40px);
 `;
 
-export interface HeatmapCanvasProps extends ComponentPropsWithRef<"canvas"> {
+export interface HeatmapCanvasProps
+  extends Omit<
+    ComponentPropsWithRef<"canvas">,
+    "style" | "dangerouslySetInnerHTML"
+  > {
   buffer?: TelemetrySource;
   workerUrl?: string;
   worker?: CanvasPort;
@@ -322,24 +459,36 @@ export function HeatmapCanvas({
   worker,
   ref,
   className,
+  style: _style,
+  dangerouslySetInnerHTML: _dangerouslySetInnerHTML,
   ...props
 }: HeatmapCanvasProps) {
   let canvasNode: HTMLCanvasElement | null = null;
 
   useEffect(() => {
-    if (canvasNode) {
-      connectCanvas(canvasNode, { worker, workerUrl, buffer, mode: "heatmap" });
-    }
+    const node = canvasNode;
+    if (!node) return;
+    const channel = connectCanvas(node, {
+      worker,
+      workerUrl,
+      buffer,
+      mode: "heatmap"
+    });
+    return () => {
+      if (!node.isConnected) {
+        channel?.dispose();
+      }
+    };
   }, [buffer, worker, workerUrl]);
 
   return (
     <HeatmapCanvasBox
+      {...props}
       ref={(node: HTMLCanvasElement | null) => {
         canvasNode = node;
         assignCanvasRef(ref, node);
       }}
       className={className}
-      {...props}
     />
   );
 }

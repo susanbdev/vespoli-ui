@@ -260,7 +260,8 @@ const IconBox = styled.span.attrs({ "aria-hidden": "true" })`
   }
 `;
 
-const GLYPH_CHAR_MAP: Readonly<Record<string, string>> = {
+const GLYPH_CHAR_MAP: Readonly<Record<string, string>> = Object.freeze({
+  __proto__: null,
   shield: String.fromCharCode(0xe001),
   branch: String.fromCharCode(0xe002),
   lock: String.fromCharCode(0xe003),
@@ -269,23 +270,45 @@ const GLYPH_CHAR_MAP: Readonly<Record<string, string>> = {
   snapshot: String.fromCharCode(0xe006),
   alert: String.fromCharCode(0xe007),
   terminal: String.fromCharCode(0xe008)
-};
+} as unknown as Record<string, string>);
 
-export interface IconProps extends ComponentPropsWithRef<"span"> {
+const ICON_SIZE_MAP: Readonly<Record<string, string>> = Object.freeze({
+  __proto__: null,
+  sm: "vui-Icon--size-sm",
+  md: "vui-Icon--size-md",
+  lg: "vui-Icon--size-lg"
+} as unknown as Record<string, string>);
+
+export interface IconProps
+  extends Omit<
+    ComponentPropsWithRef<"span">,
+    "style" | "dangerouslySetInnerHTML"
+  > {
   name: GlyphName;
   size?: "sm" | "md" | "lg";
 }
 
-export function Icon({ name, size = "md", className, ...props }: IconProps) {
-  const glyphChar = GLYPH_CHAR_MAP[name];
-  const cls =
-    `vui-Icon--size-${size}` + (className ? " " + className : "");
+export function Icon({
+  name,
+  size = "md",
+  className,
+  style: _style,
+  dangerouslySetInnerHTML: _dangerouslySetInnerHTML,
+  ...props
+}: IconProps) {
+  const glyphChar = Object.hasOwn(GLYPH_CHAR_MAP, String(name))
+    ? GLYPH_CHAR_MAP[String(name)]
+    : undefined;
+  const sizeCls = Object.hasOwn(ICON_SIZE_MAP, String(size))
+    ? ICON_SIZE_MAP[String(size)]!
+    : ICON_SIZE_MAP.md!;
+  const cls = sizeCls + (className ? " " + className : "");
   return (
     <IconBox
+      {...props}
       data-icon={name}
       data-glyph={glyphChar ? "font" : "css"}
       className={cls}
-      {...props}
     >
       {glyphChar ?? null}
     </IconBox>

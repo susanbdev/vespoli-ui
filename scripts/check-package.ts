@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { auditSourceLaws } from "../packages/styled-compiler/src/index.ts";
 import { buildAll } from "./build.ts";
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -33,6 +34,66 @@ function countPascalWords(ident: string): number {
   return parts ? parts.length : 1;
 }
 
+function hasTopLevelCollection(source: string): boolean {
+  let depth = 0;
+  let quote: string | null = null;
+  let i = 0;
+  while (i < source.length) {
+    const ch = source[i]!;
+    if (quote) {
+      if (ch === quote) {
+        let bs = 0;
+        let k = i;
+        while (k > 0 && source[k - 1] === "\\") {
+          bs += 1;
+          k -= 1;
+        }
+        if ((bs & 1) === 0) quote = null;
+      }
+      i += 1;
+      continue;
+    }
+    if (ch === "/" && source[i + 1] === "/") {
+      while (i < source.length && source[i] !== "\n") i += 1;
+      continue;
+    }
+    if (ch === "/" && source[i + 1] === "*") {
+      i += 2;
+      while (i + 1 < source.length && !(source[i] === "*" && source[i + 1] === "/")) {
+        i += 1;
+      }
+      i += 2;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      quote = ch;
+      i += 1;
+      continue;
+    }
+    if (ch === "{") {
+      depth += 1;
+      i += 1;
+      continue;
+    }
+    if (ch === "}") {
+      depth = Math.max(0, depth - 1);
+      i += 1;
+      continue;
+    }
+    if (depth === 0 && source.startsWith("new ", i)) {
+      const prev = i > 0 ? source[i - 1]! : " ";
+      if (!/[A-Za-z0-9_$]/.test(prev)) {
+        const rest = source.slice(i + 4).trimStart();
+        if (/^(?:WeakMap|WeakSet|Map|Set)\b/.test(rest)) {
+          return true;
+        }
+      }
+    }
+    i += 1;
+  }
+  return false;
+}
+
 export function verifyPackageGate(): void {
   const distIndex = path.join(REPO_ROOT, "dist", "esm", "index.js");
   if (!fs.existsSync(distIndex)) {
@@ -41,12 +102,10 @@ export function verifyPackageGate(): void {
 
   const failures: string[] = [];
 
-  const vecOpen = "<" + "svg";
-  const vecPath = "<" + "path";
-  const vecExt = "." + "svg";
   const vecMime = "image/" + "svg+xml";
+  const vecExt = "." + "svg";
 
-  // 1. Verify style_runtime_bytes == 0 across dist/esm/**
+  // 1. Verify style_runtime_bytes == 0 and style/dangerouslySetInnerHTML stripping across dist/esm/**
   const esmFiles = collectFiles(path.join(REPO_ROOT, "dist", "esm")).filter((f) =>
     f.endsWith(".js")
   );
@@ -58,74 +117,73 @@ export function verifyPackageGate(): void {
   let inlineStyleCount = 0;
 
   for (const file of esmFiles) {
+    const relEsm = path.relative(REPO_ROOT, file);
     const content = fs.readFileSync(file, "utf8");
     if (
       content.includes("@vespoli/styled") ||
       content.includes("insertRule") ||
       content.includes("CSSStyleSheet") ||
-      /createElement\(\s*["']style["']/.test(content)
+      /createElement\(\s*["'`]style["'`]/.test(content)
     ) {
       styleRuntimeBytes += Buffer.byteLength(content, "utf8");
-      failures.push(`Runtime style code leaked into ${path.relative(REPO_ROOT, file)}`);
+      failures.push(`Runtime style code leaked into ${relEsm}`);
     }
     if (
-      /\bstyle\s*:/.test(content) ||
-      /setAttribute\(\s*["']style["']/.test(content)
+      /(?<![\w$.])style\s*:(?!\s*_style\b)/.test(content) ||
+      /(?<![\w$.])dangerouslySetInnerHTML\s*:(?!\s*_dangerouslySetInnerHTML\b)/.test(
+        content
+      ) ||
+      /\.\s*style\s*(?:\.|\[)/.test(content) ||
+      /setAttribute\(\s*["'`]style["'`]/.test(content)
     ) {
       inlineStyleCount += 1;
-      failures.push(`Inline style attribute found in ${path.relative(REPO_ROOT, file)}`);
+      failures.push(`Inline style or dangerouslySetInnerHTML emission found in ${relEsm}`);
     }
   }
 
-  // 2. Verify packages/ui/src/** Laws 1, 2, 4, 5, 7 & Naming Law
+  // 2. Verify packages/ui/src/** Laws 1, 2, 4, 5, 7, raw 7-bit LF ASCII & Naming Law
   const uiSrcFiles = collectFiles(
     path.join(REPO_ROOT, "packages", "ui", "src")
   ).filter((f) => /\.(tsx|ts)$/.test(f));
 
-  const bannedHooks = [
-    "useState",
-    "useReducer",
-    "useContext",
-    "createContext",
-    "useSyncExternalStore",
-    "XMLHttpRequest",
-    "WebSocket",
-    "setTimeout",
-    "setInterval"
-  ];
   let statefulHookCount = 0;
 
   for (const file of uiSrcFiles) {
     const rel = path.relative(REPO_ROOT, file);
     const baseName = path.basename(file);
-    const content = fs.readFileSync(file, "utf8");
+    const rawBuf = fs.readFileSync(file);
+
+    for (let idx = 0; idx < rawBuf.length; idx += 1) {
+      const b = rawBuf[idx]!;
+      if (b !== 9 && b !== 10 && (b < 32 || b > 126)) {
+        failures.push(
+          `Raw byte 0x${b.toString(16)} disallowed in ${rel} at offset ${idx}`
+        );
+        break;
+      }
+    }
+
+    const content = rawBuf.toString("utf8");
 
     if (/\b(?:utils|helpers|common|misc)\b/i.test(baseName)) {
       failures.push(`Banned catch-all module filename: ${rel}`);
     }
 
-    if (/\bstyle\s*=\s*\{|\bstyle\s*=\s*["']/.test(content)) {
-      inlineStyleCount += 1;
-      failures.push(`Inline style attribute in ${rel}`);
+    const lawDiags = auditSourceLaws(content, {
+      isUiPackage: true,
+      filePath: rel
+    });
+    for (const d of lawDiags) {
+      if (d.code === "VUI002") statefulHookCount += 1;
+      if (d.code === "VUI003") inlineStyleCount += 1;
+      failures.push(`${rel}:${d.line ?? 0} ${d.code}: ${d.message}`);
     }
 
-    for (const hook of bannedHooks) {
-      if (new RegExp(`\\b${hook}\\b`).test(content)) {
-        statefulHookCount += 1;
-        failures.push(`Banned stateful/effectful API '${hook}' in ${rel}`);
-      }
-    }
-
-    if (/\bfetch\s*\(/.test(content)) {
-      statefulHookCount += 1;
-      failures.push(`Banned network fetch() in ${rel}`);
-    }
-
-    // Verify module-level WeakMap/WeakSet only appear in canvas.tsx and transitions.ts
+    // Verify module-level WeakMap/WeakSet/Map/Set only appear in canvas.tsx and transitions.ts
     if (
       baseName !== "canvas.tsx" &&
       baseName !== "transitions.ts" &&
-      /\bnew\s+(?:WeakMap|WeakSet|Map|Set)\b/.test(content)
+      hasTopLevelCollection(content)
     ) {
       failures.push(`Unexpected module-level collection in ${rel}`);
     }
@@ -159,11 +217,17 @@ export function verifyPackageGate(): void {
   );
   const vecExtRe = new RegExp(`\\.${"svg"}(?:[^a-z0-9]|$)`, "i");
 
-  // 3. Verify svg_count == 0 across packages/**, bench/**, scripts/**, tests/**, crates/**, dist/**
+  // 3. Verify svg_count == 0 and 0 nested AGENT*.md files across packages/**, bench/**, scripts/**, tests/**, crates/**, dist/**
   let vectorCount = 0;
   const scanRoots = ["packages", "bench", "scripts", "tests", "crates", "dist"];
   for (const dirName of scanRoots) {
     for (const file of collectFiles(path.join(REPO_ROOT, dirName))) {
+      const base = path.basename(file);
+      if (/^agent.*\.md$/i.test(base)) {
+        failures.push(
+          `Nested AGENT*.md file is prohibited: ${path.relative(REPO_ROOT, file)}`
+        );
+      }
       if (file.endsWith(".woff2")) {
         if (file.toLowerCase().endsWith(vecExt)) {
           vectorCount += 1;
@@ -183,11 +247,14 @@ export function verifyPackageGate(): void {
     }
   }
 
-  // 4. Verify AGENT.md (< 3 KB) & manifest.json & subpath exports
-  const agentMdPath = path.join(REPO_ROOT, "packages", "ui", "AGENT.md");
-  const agentBytes = fs.statSync(agentMdPath).size;
-  if (agentBytes > 3072) {
-    failures.push(`packages/ui/AGENT.md exceeds 3 KB (${agentBytes} B)`);
+  // 4. Verify REFERENCE.md (< 3 KB) & manifest.json & subpath exports
+  const refMdPath = path.join(REPO_ROOT, "packages", "ui", "REFERENCE.md");
+  if (!fs.existsSync(refMdPath)) {
+    failures.push("Missing packages/ui/REFERENCE.md");
+  }
+  const refBytes = fs.existsSync(refMdPath) ? fs.statSync(refMdPath).size : 0;
+  if (refBytes > 3072) {
+    failures.push(`packages/ui/REFERENCE.md exceeds 3 KB (${refBytes} B)`);
   }
 
   const manifestPath = path.join(REPO_ROOT, "dist", "manifest.json");
@@ -240,7 +307,7 @@ export function verifyPackageGate(): void {
   }
 
   console.log(
-    `[check-package] PASS | style_runtime_bytes=0 | inline_style_attr_count=0 | vector_count=0 | stateful_hook_count=0 | components=${manifest.components.length} | AGENT.md=${agentBytes}B`
+    `[check-package] PASS | style_runtime_bytes=0 | inline_style_attr_count=0 | vector_count=0 | stateful_hook_count=0 | components=${manifest.components.length} | REFERENCE.md=${refBytes}B`
   );
 }
 

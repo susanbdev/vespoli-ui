@@ -1,7 +1,7 @@
-# vespoli-ui Agent Reference (v1.0)
+# vespoli-ui API Reference (v1.0)
 
 Imports: `import { Button, Container, Row, Col, Dialog, transitionTo } from 'vespoli-ui'` + `import 'vespoli-ui/styles.css'`.
-Rules: 0 providers, native HTML props (`onClick`, `disabled`, `open`, `onClose`), 0 inline `style`, 0 vector tags, `<IconButton aria-label="...">` required.
+Rules: 0 providers, native HTML props (`onClick`, `disabled`, `open`, `onClose`), 0 inline `style`, 0 `dangerouslySetInnerHTML`, 0 vector tags, `<IconButton aria-label="...">` required.
 Helpers: `transitionTo(fn, { direction? })`, `trackOrigin(doc?)`, `moveFocus(el, idx)`, `decimateMinMax(f32, widthPx)`.
 Layers: `@layer vui.reset, vui.tokens, vui.grid, vui.components, vui.transitions, vui.utilities;`
 SCSS: `@use 'vespoli-ui/scss' with ($ButtonPaddingX: 10px, $color-accent: #38bdf8);`

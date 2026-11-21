@@ -38,7 +38,11 @@ const PropertyItemBox = styled.div<PropertyStyle>`
   `}
 `;
 
-export interface PropertyItemProps extends ComponentPropsWithRef<"div"> {
+export interface PropertyItemProps
+  extends Omit<
+    ComponentPropsWithRef<"div">,
+    "style" | "dangerouslySetInnerHTML"
+  > {
   mono?: boolean;
   term?: ReactNode;
   value?: ReactNode;
@@ -50,6 +54,8 @@ export function PropertyItem({
   value,
   children,
   className,
+  style: _style,
+  dangerouslySetInnerHTML: _dangerouslySetInnerHTML,
   ...props
 }: PropertyItemProps) {
   const cls =
@@ -57,14 +63,14 @@ export function PropertyItem({
     (className ? (mono ? " " : "") + className : "");
   if (term !== undefined || value !== undefined) {
     return (
-      <PropertyItemBox className={cls || undefined} {...props}>
+      <PropertyItemBox {...props} className={cls || undefined}>
         <dt>{term}</dt>
         <dd>{value}</dd>
       </PropertyItemBox>
     );
   }
   return (
-    <PropertyItemBox className={cls || undefined} {...props}>
+    <PropertyItemBox {...props} className={cls || undefined}>
       {children}
     </PropertyItemBox>
   );
@@ -151,55 +157,104 @@ const JsonTreeBox = styled.ul.attrs({ role: "tree" })`
   }
 `;
 
-export interface JsonTreeProps extends ComponentPropsWithRef<"ul"> {
+const MAX_JSON_TREE_DEPTH = 32;
+
+export interface JsonTreeProps
+  extends Omit<
+    ComponentPropsWithRef<"ul">,
+    "style" | "dangerouslySetInnerHTML"
+  > {
   data?: unknown;
+  maxDepth?: number;
 }
 
-function renderJsonEntry(label: string, val: unknown, depth: number): JSX.Element {
-  if (val !== null && typeof val === "object" && depth < 6) {
+function formatJsonLeaf(val: unknown): string {
+  if (typeof val === "bigint") return `${val}n`;
+  if (typeof val === "symbol" || typeof val === "function") return String(val);
+  if (val === undefined) return "undefined";
+  return JSON.stringify(val) ?? String(val);
+}
+
+function renderJsonEntry(
+  label: string,
+  val: unknown,
+  depth: number,
+  limit: number,
+  seen: WeakSet<object>
+): JSX.Element {
+  if (val !== null && typeof val === "object") {
+    if (seen.has(val)) {
+      return (
+        <li key={label} role="treeitem">
+          <span>{label}: </span>
+          <span>"[Circular]"</span>
+        </li>
+      );
+    }
+    if (depth >= limit) {
+      return (
+        <li key={label} role="treeitem">
+          <span>{label}: </span>
+          <span>{Array.isArray(val) ? "[Array]" : "[Object]"}</span>
+        </li>
+      );
+    }
+    seen.add(val);
     const entries = Array.isArray(val)
       ? val.map((item, i) => [String(i), item] as const)
       : Object.entries(val as Record<string, unknown>);
+    const renderedKids = entries.map(([k, v]) =>
+      renderJsonEntry(k, v, depth + 1, limit, seen)
+    );
+    seen.delete(val);
     return (
       <li key={label} role="treeitem" aria-expanded={true}>
         <span>{label}:</span>
-        <ul role="group">
-          {entries.map(([k, v]) => renderJsonEntry(k, v, depth + 1))}
-        </ul>
+        <ul role="group">{renderedKids}</ul>
       </li>
     );
   }
   return (
     <li key={label} role="treeitem">
       <span>{label}: </span>
-      <span>{JSON.stringify(val)}</span>
+      <span>{formatJsonLeaf(val)}</span>
     </li>
   );
 }
 
 export function JsonTree({
   data,
+  maxDepth = MAX_JSON_TREE_DEPTH,
   children,
   className,
+  style: _style,
+  dangerouslySetInnerHTML: _dangerouslySetInnerHTML,
   ...props
 }: JsonTreeProps) {
   if (data === undefined) {
     return (
-      <JsonTreeBox className={className} {...props}>
+      <JsonTreeBox {...props} className={className}>
         {children}
       </JsonTreeBox>
     );
   }
-  const topEntries =
-    data !== null && typeof data === "object"
-      ? Array.isArray(data)
-        ? data.map((item, i) => [String(i), item] as const)
-        : Object.entries(data as Record<string, unknown>)
-      : [["value", data] as const];
+  const safeLimit = Number.isFinite(maxDepth)
+    ? Math.max(1, Math.min(MAX_JSON_TREE_DEPTH, Math.floor(maxDepth)))
+    : MAX_JSON_TREE_DEPTH;
+  const seen = new WeakSet<object>();
+  let topEntries: ReadonlyArray<readonly [string, unknown]>;
+  if (data !== null && typeof data === "object") {
+    seen.add(data);
+    topEntries = Array.isArray(data)
+      ? data.map((item, i) => [String(i), item] as const)
+      : Object.entries(data as Record<string, unknown>);
+  } else {
+    topEntries = [["value", data] as const];
+  }
 
   return (
-    <JsonTreeBox className={className} {...props}>
-      {topEntries.map(([k, v]) => renderJsonEntry(k, v, 1))}
+    <JsonTreeBox {...props} className={className}>
+      {topEntries.map(([k, v]) => renderJsonEntry(k, v, 1, safeLimit, seen))}
     </JsonTreeBox>
   );
 }

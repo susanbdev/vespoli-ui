@@ -18,7 +18,8 @@ export {
   Shell,
   SplitView,
   Stack,
-  Toolbar
+  Toolbar,
+  sanitizeHref
 } from "./layout.tsx";
 export type {
   CardStyleProps,
@@ -163,7 +164,8 @@ export {
   createRingBuffer,
   decimateMinMax,
   interpolateColumns,
-  readWindow
+  readWindow,
+  validateWorkerUrl
 } from "./canvas.tsx";
 export type {
   BlitTarget,

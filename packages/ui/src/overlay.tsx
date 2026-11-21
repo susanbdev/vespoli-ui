@@ -18,7 +18,10 @@ const DialogBox = styled.dialog`
 `;
 
 export interface DialogProps
-  extends Omit<ComponentPropsWithRef<"dialog">, "open" | "onClose"> {
+  extends Omit<
+    ComponentPropsWithRef<"dialog">,
+    "open" | "onClose" | "style" | "dangerouslySetInnerHTML"
+  > {
   open: boolean;
   onClose?: () => void;
   loading?: boolean;
@@ -62,6 +65,8 @@ export function Dialog({
   onCancel,
   ref,
   className,
+  style: _style,
+  dangerouslySetInnerHTML: _dangerouslySetInnerHTML,
   ...props
 }: DialogProps) {
   let elementRef: HTMLDialogElement | null = null;
@@ -89,6 +94,7 @@ export function Dialog({
 
   return (
     <DialogBox
+      {...props}
       ref={bindRef}
       data-vui-morph-target={open ? "dialog" : undefined}
       data-loading={loading ? "true" : undefined}
@@ -96,7 +102,6 @@ export function Dialog({
       onCancel={handleCancel}
       onClose={handleNativeClose}
       className={className}
-      {...props}
     />
   );
 }
@@ -129,8 +134,17 @@ const InspectorBox = styled.dialog<InspectorStyle>`
   `}
 `;
 
+const INSPECTOR_DRAWER_MAP: Readonly<Record<string, string>> = Object.freeze({
+  __proto__: null,
+  right: "vui-Inspector--drawer-right",
+  bottom: "vui-Inspector--drawer-bottom"
+} as unknown as Record<string, string>);
+
 export interface InspectorProps
-  extends Omit<ComponentPropsWithRef<"dialog">, "open" | "onClose"> {
+  extends Omit<
+    ComponentPropsWithRef<"dialog">,
+    "open" | "onClose" | "style" | "dangerouslySetInnerHTML"
+  > {
   open: boolean;
   onClose?: () => void;
   loading?: boolean;
@@ -145,6 +159,8 @@ export function Inspector({
   onCancel,
   ref,
   className,
+  style: _style,
+  dangerouslySetInnerHTML: _dangerouslySetInnerHTML,
   ...props
 }: InspectorProps) {
   let elementRef: HTMLDialogElement | null = null;
@@ -164,11 +180,14 @@ export function Inspector({
     onClose?.();
   };
 
-  const cls =
-    `vui-Inspector--drawer-${drawer}` + (className ? " " + className : "");
+  const drawerCls = Object.hasOwn(INSPECTOR_DRAWER_MAP, String(drawer))
+    ? INSPECTOR_DRAWER_MAP[String(drawer)]!
+    : INSPECTOR_DRAWER_MAP.right!;
+  const cls = drawerCls + (className ? " " + className : "");
 
   return (
     <InspectorBox
+      {...props}
       ref={bindRef}
       data-vui-morph-target={open ? "inspector" : undefined}
       data-loading={loading ? "true" : undefined}
@@ -178,7 +197,6 @@ export function Inspector({
         if (open) onClose?.();
       }}
       className={cls}
-      {...props}
     />
   );
 }

@@ -37,7 +37,11 @@ export interface FacetOption {
   readonly count?: number;
 }
 
-export interface FacetListProps extends ComponentPropsWithRef<"ul"> {
+export interface FacetListProps
+  extends Omit<
+    ComponentPropsWithRef<"ul">,
+    "style" | "dangerouslySetInnerHTML"
+  > {
   items?: readonly FacetOption[];
   selectedKeys?: ReadonlySet<string> | readonly string[];
   excludedKeys?: ReadonlySet<string> | readonly string[];
@@ -62,6 +66,8 @@ export function FacetList({
   onKeyDown,
   children,
   className,
+  style: _style,
+  dangerouslySetInnerHTML: _dangerouslySetInnerHTML,
   ...props
 }: FacetListProps) {
   const handleDelegatedClick = (event: MouseEvent<HTMLUListElement>) => {
@@ -89,10 +95,10 @@ export function FacetList({
   if (items && items.length > 0) {
     return (
       <FacetListBox
+        {...props}
         onClick={handleDelegatedClick}
         onKeyDown={handleDelegatedKey}
         className={className}
-        {...props}
       >
         {items.map((item, idx) => {
           const selected = hasKey(selectedKeys, item.key);
@@ -116,10 +122,10 @@ export function FacetList({
 
   return (
     <FacetListBox
+      {...props}
       onClick={onToggleKey ? handleDelegatedClick : onClick}
       onKeyDown={onToggleKey ? handleDelegatedKey : onKeyDown}
       className={className}
-      {...props}
     >
       {children}
     </FacetListBox>
@@ -152,7 +158,11 @@ const FacetItemBox = styled.li.attrs({ role: "option" })`
   }
 `;
 
-export interface FacetItemProps extends ComponentPropsWithRef<"li"> {
+export interface FacetItemProps
+  extends Omit<
+    ComponentPropsWithRef<"li">,
+    "style" | "dangerouslySetInnerHTML"
+  > {
   facetKey?: string;
   selected?: boolean;
   excluded?: boolean;
@@ -163,15 +173,17 @@ export function FacetItem({
   selected = false,
   excluded = false,
   className,
+  style: _style,
+  dangerouslySetInnerHTML: _dangerouslySetInnerHTML,
   ...props
 }: FacetItemProps) {
   return (
     <FacetItemBox
+      {...props}
       data-facet-key={facetKey}
       aria-selected={selected}
       data-excluded={excluded ? "true" : undefined}
       className={className}
-      {...props}
     />
   );
 }
@@ -210,7 +222,11 @@ const ChipBox = styled.button.attrs({ type: "button" })<ChipStyle>`
   `}
 `;
 
-export interface ChipProps extends ComponentPropsWithRef<"button"> {
+export interface ChipProps
+  extends Omit<
+    ComponentPropsWithRef<"button">,
+    "style" | "dangerouslySetInnerHTML"
+  > {
   operator?: "in" | "not";
   onRemove?: () => void;
 }
@@ -220,6 +236,8 @@ export function Chip({
   onRemove,
   onClick,
   className,
+  style: _style,
+  dangerouslySetInnerHTML: _dangerouslySetInnerHTML,
   ...props
 }: ChipProps) {
   const cls =
@@ -227,9 +245,9 @@ export function Chip({
     (className ? (operator === "not" ? " " : "") + className : "");
   return (
     <ChipBox
+      {...props}
       onClick={onRemove ?? onClick}
       className={cls || undefined}
-      {...props}
     />
   );
 }

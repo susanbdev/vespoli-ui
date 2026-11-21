@@ -21,6 +21,9 @@ tracked = sorted(
 )
 errors = []
 for rel in tracked:
+    base = os.path.basename(rel)
+    if rel != "AGENTS.md" and base.upper().startswith("AGENT") and base.upper().endswith(".MD"):
+        errors.append(f"{rel}: nested AGENT*.md filename is prohibited (use REFERENCE.md)")
     full = os.path.join(root, rel)
     if not os.path.isfile(full):
         continue
@@ -32,9 +35,9 @@ for rel in tracked:
 
 if errors:
     for e in errors:
-        print("ASCII ERROR:", e, file=sys.stderr)
+        print("ASCII/HYGIENE ERROR:", e, file=sys.stderr)
     sys.exit(1)
-print(f"    Verified {len(tracked)} tracked files are pure 7-bit printable ASCII.")
+print(f"    Verified {len(tracked)} tracked files are pure 7-bit printable ASCII with sole root AGENTS.md.")
 PY
 
 echo "==> [2/7] CI workflow supply-chain pin audit"
@@ -54,12 +57,14 @@ if "persist-credentials: false" not in wf:
 print("    Verified ci.yml uses pinned checkout with persist-credentials: false.")
 PY
 
-echo "==> [3/7] Rust compiler fmt, clippy (-D warnings), and unit tests (--offline)"
+echo "==> [3/7] Rust compiler fmt, clippy (-D warnings), unit tests, and UI source audit (--offline)"
 cargo fmt --manifest-path "$REPO_ROOT/Cargo.toml" --all -- --check
 cargo clippy --manifest-path "$REPO_ROOT/Cargo.toml" --workspace --all-targets --offline -- -D warnings
 cargo test --manifest-path "$REPO_ROOT/Cargo.toml" --workspace --offline
+cargo build --manifest-path "$REPO_ROOT/Cargo.toml" -p compiler --offline
+"$REPO_ROOT/target/debug/vui-compile" audit "$REPO_ROOT"/packages/ui/src/*.ts "$REPO_ROOT"/packages/ui/src/*.tsx
 
-echo "==> [4/7] Build zero-runtime ESM, SCSS partials, styles.css, WOFF2 glyphs, and AGENT.md"
+echo "==> [4/7] Build zero-runtime ESM, SCSS partials, styles.css, WOFF2 glyphs, and REFERENCE.md"
 node --experimental-strip-types "$REPO_ROOT/scripts/build.ts"
 
 echo "==> [5/7] Static Package, Naming, CSP & Zero-SVG Gate (scripts/check-package.ts)"

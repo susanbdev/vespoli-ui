@@ -32,16 +32,18 @@ export function verifyScssGate(): void {
     );
   }
 
-  // 2. Verify 50% Customization Dial: @use 'vespoli-ui/scss' with ($ButtonPaddingX: 10px, $color-accent: #38bdf8)
-  const customConsumerScss = `@use "vespoli-ui/scss" with ($ButtonPaddingX: 10px, $color-accent: #38bdf8, $GridGutter: 24px);`;
+  // 2. Verify 50% Customization Dial: @use 'vespoli-ui/scss' with ($ButtonPaddingX: 10px, $color-accent: #38bdf8, $RowHeight: 40px)
+  const customConsumerScss = `@use "vespoli-ui/scss" with ($ButtonPaddingX: 10px, $color-accent: #38bdf8, $GridGutter: 24px, $RowHeight: 40px);`;
   const customCss = compileScssInline(customConsumerScss, scssDir, true);
   if (
     !customCss.includes("--vui-color-accent:#38bdf8") ||
     !customCss.includes("10px") ||
-    !customCss.includes("padding-inline:24px")
+    !customCss.includes("padding-inline:24px") ||
+    !customCss.includes('[data-bit="0"]{height:40px}') ||
+    !customCss.includes('[data-bit="2"]{height:160px}')
   ) {
     throw new Error(
-      "[check-scss] @use 'vespoli-ui/scss' with (...) variable overrides failed to propagate"
+      "[check-scss] @use 'vespoli-ui/scss' with (...) variable overrides (including $RowHeight) failed to propagate"
     );
   }
 

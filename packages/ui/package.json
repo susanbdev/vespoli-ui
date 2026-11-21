@@ -19,7 +19,7 @@
     "./scss": "./dist/scss/index.scss",
     "./scss/components/*": "./dist/scss/components/_*.scss",
     "./fonts/*": "./dist/fonts/*",
-    "./AGENT.md": "./AGENT.md",
+    "./REFERENCE.md": "./REFERENCE.md",
     "./manifest.json": "./dist/manifest.json",
     "./transitions": {
       "types": "./src/transitions.ts",
@@ -38,7 +38,7 @@
   "files": [
     "dist",
     "src",
-    "AGENT.md"
+    "REFERENCE.md"
   ],
   "peerDependencies": {
     "react": "^18.3.0 || ^19.0.0"

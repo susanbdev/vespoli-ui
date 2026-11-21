@@ -17,6 +17,10 @@ impl CompilerError {
     }
 }
 
+const MAX_VAR_DEPTH: usize = 16;
+const MAX_EXPANDED_BYTES: usize = 64 * 1024;
+const MAX_OUTPUT_CSS_BYTES: usize = 4 * 1024 * 1024;
+
 #[derive(Debug, Clone, Default)]
 pub struct ScssEnv {
     pub vars: BTreeMap<String, String>,
@@ -46,20 +50,50 @@ enum ScssItem {
 }
 
 pub fn compile_scss_file(path: &Path) -> Result<String, CompilerError> {
-    let source = fs::read_to_string(path).map_err(|err| {
-        CompilerError::create(
-            "VUI010",
-            format!("unable to read {}: {}", path.display(), err),
-        )
-    })?;
     let base_dir = path.parent().unwrap_or_else(|| Path::new("."));
-    compile_scss_with_base(&source, base_dir)
+    compile_scss_file_with_base(path, base_dir)
+}
+
+pub fn compile_scss_file_with_base(path: &Path, base_dir: &Path) -> Result<String, CompilerError> {
+    if path.extension().and_then(|s| s.to_str()) != Some("scss") {
+        return Err(CompilerError::create(
+            "VUI010",
+            "SCSS input file must use .scss extension",
+        ));
+    }
+    let canonical_root = ensure_canonical_base_dir(base_dir)?;
+    reject_symlinks_along_path(&canonical_root, path)?;
+    let meta = fs::symlink_metadata(path).map_err(|_| {
+        CompilerError::create("VUI010", "unable to inspect SCSS input file metadata")
+    })?;
+    if meta.file_type().is_symlink() || !meta.is_file() {
+        return Err(CompilerError::create(
+            "VUI010",
+            "SCSS input path must be a regular non-symlink file",
+        ));
+    }
+    let canonical_file = fs::canonicalize(path)
+        .map_err(|_| CompilerError::create("VUI010", "unable to canonicalize SCSS input file"))?;
+    if !canonical_file.starts_with(&canonical_root) {
+        return Err(CompilerError::create(
+            "VUI010",
+            "SCSS input file escapes canonical base_dir",
+        ));
+    }
+    let source = fs::read_to_string(&canonical_file)
+        .map_err(|_| CompilerError::create("VUI010", "unable to read SCSS input file"))?;
+    let current_dir = canonical_file.parent().unwrap_or(&canonical_root);
+    let mut env = ScssEnv::default();
+    env.visited.insert(canonical_file.clone());
+    let mut out = String::new();
+    evaluate_module(&source, &canonical_root, current_dir, &mut env, &mut out)?;
+    Ok(out)
 }
 
 pub fn compile_scss_with_base(source: &str, base_dir: &Path) -> Result<String, CompilerError> {
     let mut env = ScssEnv::default();
     let mut out = String::new();
-    evaluate_module(source, base_dir, &mut env, &mut out)?;
+    evaluate_module(source, base_dir, base_dir, &mut env, &mut out)?;
     Ok(out)
 }
 
@@ -69,14 +103,15 @@ pub fn compile_scss(source: &str) -> Result<String, CompilerError> {
 
 pub fn minify_css(css: &str) -> String {
     let stripped = strip_comments(css);
+    let raw_bytes = stripped.as_bytes();
     let mut out = String::with_capacity(stripped.len());
     let mut in_quote: Option<char> = None;
     let mut prev_space = false;
 
-    for ch in stripped.chars() {
+    for (idx, ch) in stripped.char_indices() {
         if let Some(q) = in_quote {
             out.push(ch);
-            if ch == q {
+            if ch == q && is_unescaped(raw_bytes, idx) {
                 in_quote = None;
             }
             continue;
@@ -149,7 +184,7 @@ fn coalesce_at_blocks(css: &str) -> String {
         while i < bytes.len() {
             let b = bytes[i];
             if let Some(q) = in_quote {
-                if b == q && (i == 0 || bytes[i - 1] != b'\\') {
+                if b == q && is_unescaped(bytes, i) {
                     in_quote = None;
                 }
                 i += 1;
@@ -244,7 +279,7 @@ fn merge_identical_rules(css: &str) -> String {
         while i < bytes.len() {
             let b = bytes[i];
             if let Some(q) = in_quote {
-                if b == q && (i == 0 || bytes[i - 1] != b'\\') {
+                if b == q && is_unescaped(bytes, i) {
                     in_quote = None;
                 }
                 i += 1;
@@ -333,7 +368,8 @@ fn needs_space_before_quote(prefix: &str) -> bool {
 
 fn evaluate_module(
     source: &str,
-    base_dir: &Path,
+    root_dir: &Path,
+    current_dir: &Path,
     env: &mut ScssEnv,
     out: &mut String,
 ) -> Result<(), CompilerError> {
@@ -353,34 +389,33 @@ fn evaluate_module(
                 env.vars.insert(name, resolved);
             }
             ScssItem::UseRule { target, overrides } => {
+                let canonical_root = ensure_canonical_base_dir(root_dir)?;
+                let canonical_current = ensure_canonical_subdir(&canonical_root, current_dir)?;
                 for (var_name, raw_val) in overrides {
                     let resolved = resolve_vars(&raw_val, &env.vars)?;
                     env.vars.entry(var_name).or_insert(resolved);
                 }
-                let resolved_path = resolve_import_path(base_dir, &target)?;
-                let canonical = fs::canonicalize(&resolved_path).unwrap_or(resolved_path.clone());
-                if env.visited.insert(canonical) {
-                    let child_src = fs::read_to_string(&resolved_path).map_err(|err| {
-                        CompilerError::create(
-                            "VUI010",
-                            format!("failed reading {}: {}", resolved_path.display(), err),
-                        )
+                let resolved_path =
+                    resolve_import_path(&canonical_root, &canonical_current, &target)?;
+                if env.visited.insert(resolved_path.clone()) {
+                    let child_src = fs::read_to_string(&resolved_path).map_err(|_| {
+                        CompilerError::create("VUI010", "failed reading resolved SCSS partial")
                     })?;
-                    let child_dir = resolved_path.parent().unwrap_or(base_dir);
-                    evaluate_module(&child_src, child_dir, env, out)?;
+                    let child_dir = resolved_path.parent().unwrap_or(&canonical_root);
+                    evaluate_module(&child_src, &canonical_root, child_dir, env, out)?;
                 }
             }
             ScssItem::Statement(stmt) => {
                 let resolved = resolve_vars(&stmt, &env.vars)?;
-                out.push_str(resolved.trim());
-                out.push_str(";\n");
+                push_bounded_output(out, resolved.trim())?;
+                push_bounded_output(out, ";\n")?;
             }
             ScssItem::Declaration { prop, value } => {
                 let resolved = resolve_vars(&value, &env.vars)?;
-                out.push_str(prop.trim());
-                out.push_str(": ");
-                out.push_str(resolved.trim());
-                out.push_str(";\n");
+                push_bounded_output(out, prop.trim())?;
+                push_bounded_output(out, ": ")?;
+                push_bounded_output(out, resolved.trim())?;
+                push_bounded_output(out, ";\n")?;
             }
             ScssItem::Block { header, body } => {
                 let resolved_header = resolve_vars(&header, &env.vars)?;
@@ -388,6 +423,17 @@ fn evaluate_module(
             }
         }
     }
+    Ok(())
+}
+
+fn push_bounded_output(out: &mut String, chunk: &str) -> Result<(), CompilerError> {
+    if out.len().saturating_add(chunk.len()) > MAX_OUTPUT_CSS_BYTES {
+        return Err(CompilerError::create(
+            "VUI010",
+            "compiled CSS output exceeded maximum size budget",
+        ));
+    }
+    out.push_str(chunk);
     Ok(())
 }
 
@@ -617,55 +663,274 @@ fn split_top_level_commas(input: &str) -> Vec<String> {
     out
 }
 
-fn resolve_import_path(base_dir: &Path, target: &str) -> Result<PathBuf, CompilerError> {
-    let normalized = target
-        .strip_prefix("vespoli-ui/scss/")
-        .or_else(|| target.strip_prefix("vespoli-ui/scss"))
-        .map(|rest| if rest.is_empty() { "index" } else { rest })
-        .unwrap_or(target);
+fn ensure_canonical_base_dir(base_dir: &Path) -> Result<PathBuf, CompilerError> {
+    let meta = fs::symlink_metadata(base_dir)
+        .map_err(|_| CompilerError::create("VUI010", "unable to inspect SCSS base_dir metadata"))?;
+    if meta.file_type().is_symlink() || !meta.is_dir() {
+        return Err(CompilerError::create(
+            "VUI010",
+            "SCSS base_dir must be a regular non-symlink directory",
+        ));
+    }
+    fs::canonicalize(base_dir)
+        .map_err(|_| CompilerError::create("VUI010", "unable to canonicalize SCSS base_dir"))
+}
 
-    let rel = Path::new(normalized);
-    let parent = rel
-        .parent()
-        .map(|p| base_dir.join(p))
-        .unwrap_or_else(|| base_dir.to_path_buf());
-    let stem = rel
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or(normalized);
-    let clean_stem = stem.strip_suffix(".scss").unwrap_or(stem);
+fn ensure_canonical_subdir(
+    canonical_root: &Path,
+    current_dir: &Path,
+) -> Result<PathBuf, CompilerError> {
+    reject_symlinks_along_path(canonical_root, current_dir)?;
+    let canon = fs::canonicalize(current_dir)
+        .map_err(|_| CompilerError::create("VUI010", "unable to canonicalize SCSS module dir"))?;
+    if !canon.starts_with(canonical_root) {
+        return Err(CompilerError::create(
+            "VUI010",
+            "SCSS module directory escapes canonical base_dir",
+        ));
+    }
+    Ok(canon)
+}
 
-    let candidates = [
-        base_dir.join(normalized),
-        parent.join(format!("{}.scss", clean_stem)),
-        parent.join(format!("_{}.scss", clean_stem)),
-        base_dir.join(normalized).join("index.scss"),
-    ];
-
-    for cand in &candidates {
-        if cand.is_file() {
-            return Ok(cand.clone());
+fn reject_symlinks_along_path(
+    canonical_root: &Path,
+    target_path: &Path,
+) -> Result<(), CompilerError> {
+    if let Ok(rel) = target_path.strip_prefix(canonical_root) {
+        let mut cur = canonical_root.to_path_buf();
+        for comp in rel.components() {
+            if let std::path::Component::Normal(seg) = comp {
+                cur.push(seg);
+                if let Ok(meta) = fs::symlink_metadata(&cur) {
+                    if meta.file_type().is_symlink() {
+                        return Err(CompilerError::create(
+                            "VUI010",
+                            "symlink disallowed in SCSS path",
+                        ));
+                    }
+                }
+            }
+        }
+    } else if let Ok(meta) = fs::symlink_metadata(target_path) {
+        if meta.file_type().is_symlink() {
+            return Err(CompilerError::create(
+                "VUI010",
+                "symlink disallowed in SCSS path",
+            ));
         }
     }
+    Ok(())
+}
+
+fn resolve_import_path(
+    canonical_root: &Path,
+    canonical_current: &Path,
+    target: &str,
+) -> Result<PathBuf, CompilerError> {
+    if target.is_empty()
+        || target.contains('\0')
+        || target.contains('\\')
+        || target.contains(':')
+        || target.starts_with('/')
+    {
+        return Err(CompilerError::create(
+            "VUI010",
+            "disallowed absolute, scheme, or backslash path in SCSS @use/@forward",
+        ));
+    }
+
+    let (normalized, from_pkg_root) = if let Some(rest) = target
+        .strip_prefix("vespoli-ui/scss/")
+        .or_else(|| target.strip_prefix("vespoli-ui/scss"))
+    {
+        (if rest.is_empty() { "index" } else { rest }, true)
+    } else {
+        (target, false)
+    };
+
+    if normalized.is_empty() || normalized.starts_with('/') {
+        return Err(CompilerError::create(
+            "VUI010",
+            "disallowed absolute SCSS @use/@forward specifier",
+        ));
+    }
+
+    let mut stack: Vec<String> = Vec::new();
+    if !from_pkg_root {
+        let rel_current = canonical_current
+            .strip_prefix(canonical_root)
+            .map_err(|_| {
+                CompilerError::create("VUI010", "SCSS module directory outside base_dir")
+            })?;
+        for comp in rel_current.components() {
+            if let std::path::Component::Normal(seg) = comp {
+                let s = seg.to_str().ok_or_else(|| {
+                    CompilerError::create("VUI010", "non-UTF8 SCSS directory segment")
+                })?;
+                stack.push(s.to_string());
+            }
+        }
+    }
+
+    for comp in Path::new(normalized).components() {
+        match comp {
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(seg) => {
+                let s = seg.to_str().ok_or_else(|| {
+                    CompilerError::create("VUI010", "invalid SCSS @use/@forward segment")
+                })?;
+                if s.is_empty() {
+                    return Err(CompilerError::create(
+                        "VUI010",
+                        "empty segment in SCSS @use/@forward",
+                    ));
+                }
+                stack.push(s.to_string());
+            }
+            std::path::Component::ParentDir => {
+                if stack.pop().is_none() {
+                    return Err(CompilerError::create(
+                        "VUI010",
+                        "SCSS @use/@forward path traversal escapes base_dir",
+                    ));
+                }
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                return Err(CompilerError::create(
+                    "VUI010",
+                    "absolute path disallowed in SCSS @use/@forward",
+                ));
+            }
+        }
+    }
+
+    let Some(last_seg) = stack.pop() else {
+        return Err(CompilerError::create(
+            "VUI010",
+            "SCSS @use/@forward target resolves to empty filename",
+        ));
+    };
+    let clean_stem = last_seg.strip_suffix(".scss").unwrap_or(&last_seg);
+
+    let candidate_tails: Vec<Vec<String>> = if last_seg.ends_with(".scss") {
+        let mut exact = stack.clone();
+        exact.push(last_seg.clone());
+        let mut partial = stack;
+        if !last_seg.starts_with('_') {
+            partial.push(format!("_{}", last_seg));
+            vec![exact, partial]
+        } else {
+            vec![exact]
+        }
+    } else {
+        let mut direct = stack.clone();
+        direct.push(format!("{}.scss", clean_stem));
+        let mut partial = stack.clone();
+        partial.push(format!("_{}.scss", clean_stem));
+        let mut idx_file = stack.clone();
+        idx_file.push(clean_stem.to_string());
+        idx_file.push("index.scss".to_string());
+        let mut partial_idx = stack;
+        partial_idx.push(clean_stem.to_string());
+        partial_idx.push("_index.scss".to_string());
+        vec![direct, partial, idx_file, partial_idx]
+    };
+
+    for segments in &candidate_tails {
+        let mut cur = canonical_root.to_path_buf();
+        let mut missing = false;
+        for seg in segments {
+            cur.push(seg);
+            match fs::symlink_metadata(&cur) {
+                Ok(meta) => {
+                    if meta.file_type().is_symlink() {
+                        return Err(CompilerError::create(
+                            "VUI010",
+                            "symlink disallowed in SCSS @use/@forward path",
+                        ));
+                    }
+                }
+                Err(_) => {
+                    missing = true;
+                    break;
+                }
+            }
+        }
+        if missing {
+            continue;
+        }
+        let Ok(meta) = fs::symlink_metadata(&cur) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() {
+            return Err(CompilerError::create(
+                "VUI010",
+                "symlink disallowed in SCSS @use/@forward target",
+            ));
+        }
+        if meta.is_file() && cur.extension().and_then(|s| s.to_str()) == Some("scss") {
+            let canon = fs::canonicalize(&cur).map_err(|_| {
+                CompilerError::create("VUI010", "failed to canonicalize SCSS partial")
+            })?;
+            if !canon.starts_with(canonical_root) {
+                return Err(CompilerError::create(
+                    "VUI010",
+                    "resolved SCSS partial escapes canonical base_dir",
+                ));
+            }
+            return Ok(canon);
+        }
+    }
+
     Err(CompilerError::create(
         "VUI010",
-        format!(
-            "cannot resolve SCSS module '{}' from {}",
-            target,
-            base_dir.display()
-        ),
+        "cannot resolve confined SCSS partial within base_dir",
     ))
 }
 
 fn resolve_vars(expr: &str, vars: &BTreeMap<String, String>) -> Result<String, CompilerError> {
-    let mut out = String::with_capacity(expr.len());
+    let expanded = resolve_vars_bounded(expr, vars, 0)?;
+    let computed = eval_scss_arithmetic(&expanded);
+    if computed.len() > MAX_EXPANDED_BYTES {
+        return Err(CompilerError::create(
+            "VUI010",
+            "SCSS variable expansion exceeded 64 KiB limit",
+        ));
+    }
+    Ok(computed)
+}
+
+fn resolve_vars_bounded(
+    expr: &str,
+    vars: &BTreeMap<String, String>,
+    depth: usize,
+) -> Result<String, CompilerError> {
+    if depth > MAX_VAR_DEPTH {
+        return Err(CompilerError::create(
+            "VUI010",
+            "SCSS variable expansion exceeded max recursion depth of 16",
+        ));
+    }
+    if expr.len() > MAX_EXPANDED_BYTES {
+        return Err(CompilerError::create(
+            "VUI010",
+            "SCSS variable expression exceeded 64 KiB limit",
+        ));
+    }
+    let mut out = String::with_capacity(expr.len().min(MAX_EXPANDED_BYTES));
     let bytes = expr.as_bytes();
     let mut i = 0usize;
     while i < bytes.len() {
         if bytes[i] == b'#' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
             if let Some(end_offset) = expr[i + 2..].find('}') {
                 let inner = &expr[i + 2..i + 2 + end_offset];
-                let resolved_inner = resolve_vars(inner.trim(), vars)?;
+                let resolved_inner = resolve_vars_bounded(inner.trim(), vars, depth + 1)?;
+                if out.len().saturating_add(resolved_inner.len()) > MAX_EXPANDED_BYTES {
+                    return Err(CompilerError::create(
+                        "VUI010",
+                        "SCSS variable expansion exceeded 64 KiB limit",
+                    ));
+                }
                 out.push_str(&resolved_inner);
                 i += 3 + end_offset;
                 continue;
@@ -681,18 +946,169 @@ fn resolve_vars(expr: &str, vars: &BTreeMap<String, String>) -> Result<String, C
             }
             if end > start {
                 let name = &expr[start..end];
-                let val = vars.get(name).ok_or_else(|| {
+                let raw_val = vars.get(name).ok_or_else(|| {
                     CompilerError::create("VUI010", format!("undeclared SCSS variable '${}'", name))
                 })?;
-                out.push_str(val);
+                let expanded_val = if raw_val.contains('$') || raw_val.contains("#{") {
+                    resolve_vars_bounded(raw_val, vars, depth + 1)?
+                } else {
+                    if raw_val.len() > MAX_EXPANDED_BYTES {
+                        return Err(CompilerError::create(
+                            "VUI010",
+                            "SCSS variable expansion exceeded 64 KiB limit",
+                        ));
+                    }
+                    raw_val.clone()
+                };
+                if out.len().saturating_add(expanded_val.len()) > MAX_EXPANDED_BYTES {
+                    return Err(CompilerError::create(
+                        "VUI010",
+                        "SCSS variable expansion exceeded 64 KiB limit",
+                    ));
+                }
+                out.push_str(&expanded_val);
                 i = end;
                 continue;
             }
+        }
+        if out.len() + 1 > MAX_EXPANDED_BYTES {
+            return Err(CompilerError::create(
+                "VUI010",
+                "SCSS variable expansion exceeded 64 KiB limit",
+            ));
         }
         out.push(bytes[i] as char);
         i += 1;
     }
     Ok(out)
+}
+
+fn eval_scss_arithmetic(expr: &str) -> String {
+    let trimmed = expr.trim();
+    if !trimmed.contains('*') {
+        return expr.to_string();
+    }
+    let bytes = trimmed.as_bytes();
+    let mut factors: Vec<&str> = Vec::new();
+    let mut start = 0usize;
+    let mut paren_depth = 0usize;
+    let mut in_quote: Option<u8> = None;
+
+    for (idx, &b) in bytes.iter().enumerate() {
+        if let Some(q) = in_quote {
+            if b == q && is_unescaped(bytes, idx) {
+                in_quote = None;
+            }
+            continue;
+        }
+        match b {
+            b'"' | b'\'' => in_quote = Some(b),
+            b'(' => paren_depth += 1,
+            b')' => paren_depth = paren_depth.saturating_sub(1),
+            b'*' if paren_depth == 0 => {
+                let piece = trimmed[start..idx].trim();
+                if piece.is_empty() {
+                    return expr.to_string();
+                }
+                factors.push(piece);
+                start = idx + 1;
+            }
+            _ => {}
+        }
+    }
+    if factors.is_empty() || in_quote.is_some() || paren_depth != 0 {
+        return expr.to_string();
+    }
+    let tail = trimmed[start..].trim();
+    if tail.is_empty() {
+        return expr.to_string();
+    }
+    factors.push(tail);
+
+    let mut product = 1.0_f64;
+    let mut chosen_unit: Option<&str> = None;
+    let mut all_dimensions = true;
+
+    for f in &factors {
+        if let Some((num, unit)) = parse_css_dimension(f) {
+            product *= num;
+            if !unit.is_empty() {
+                match chosen_unit {
+                    None => chosen_unit = Some(unit),
+                    Some(prev) if prev == unit => {
+                        all_dimensions = false;
+                        break;
+                    }
+                    Some(_) => {
+                        all_dimensions = false;
+                        break;
+                    }
+                }
+            }
+        } else {
+            all_dimensions = false;
+            break;
+        }
+    }
+
+    if all_dimensions && product.is_finite() {
+        let unit = chosen_unit.unwrap_or("");
+        let formatted_num = if (product - product.round()).abs() < 1e-9 && product.abs() < 1e15 {
+            format!("{}", product.round() as i64)
+        } else {
+            let s = format!("{:.6}", product);
+            s.trim_end_matches('0').trim_end_matches('.').to_string()
+        };
+        return format!("{}{}", formatted_num, unit);
+    }
+
+    let all_calc_compatible = factors.iter().all(|f| {
+        parse_css_dimension(f).is_some() || f.starts_with("var(") || f.starts_with("calc(")
+    });
+    if all_calc_compatible {
+        return format!("calc({})", factors.join(" * "));
+    }
+
+    expr.to_string()
+}
+
+fn parse_css_dimension(token: &str) -> Option<(f64, &str)> {
+    let t = token.trim();
+    if t.is_empty() {
+        return None;
+    }
+    let bytes = t.as_bytes();
+    let mut idx = 0usize;
+    if bytes[idx] == b'+' || bytes[idx] == b'-' {
+        idx += 1;
+    }
+    let num_start = idx;
+    let mut saw_digit = false;
+    let mut saw_dot = false;
+    while idx < bytes.len() {
+        let b = bytes[idx];
+        if b.is_ascii_digit() {
+            saw_digit = true;
+            idx += 1;
+        } else if b == b'.' && !saw_dot {
+            saw_dot = true;
+            idx += 1;
+        } else {
+            break;
+        }
+    }
+    if !saw_digit || idx == num_start {
+        return None;
+    }
+    let num: f64 = t[..idx].parse().ok()?;
+    if !num.is_finite() {
+        return None;
+    }
+    let unit = &t[idx..];
+    if !unit.is_empty() && !unit.bytes().all(|b| b.is_ascii_alphabetic() || b == b'%') {
+        return None;
+    }
+    Some((num, unit))
 }
 
 fn parse_items(src: &str) -> Result<Vec<ScssItem>, CompilerError> {
@@ -716,7 +1132,7 @@ fn parse_items(src: &str) -> Result<Vec<ScssItem>, CompilerError> {
         while i < bytes.len() {
             let b = bytes[i];
             if let Some(q) = in_quote {
-                if b == q && (i == 0 || bytes[i - 1] != b'\\') {
+                if b == q && is_unescaped(bytes, i) {
                     in_quote = None;
                 }
                 i += 1;
@@ -755,9 +1171,10 @@ fn parse_items(src: &str) -> Result<Vec<ScssItem>, CompilerError> {
             _ => {
                 let trailing = src[start..].trim();
                 if !trailing.is_empty() {
+                    let line_no = 1 + src[..start].bytes().filter(|&b| b == b'\n').count();
                     return Err(CompilerError::create(
                         "VUI010",
-                        format!("unterminated SCSS statement near '{}'", trailing),
+                        format!("unterminated SCSS statement at line {}", line_no),
                     ));
                 }
                 break;
@@ -771,9 +1188,19 @@ fn parse_items(src: &str) -> Result<Vec<ScssItem>, CompilerError> {
 fn classify_statement(raw: &str) -> Result<ScssItem, CompilerError> {
     if let Some(rest) = raw.strip_prefix('$') {
         let colon = rest.find(':').ok_or_else(|| {
-            CompilerError::create("VUI010", format!("invalid variable declaration '{}'", raw))
+            CompilerError::create("VUI010", "invalid SCSS variable declaration syntax")
         })?;
         let name = rest[..colon].trim().to_string();
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        {
+            return Err(CompilerError::create(
+                "VUI010",
+                "invalid SCSS variable identifier",
+            ));
+        }
         let rhs = rest[colon + 1..].trim();
         let (value, is_default) = if let Some(stripped) = rhs.strip_suffix("!default") {
             (stripped.trim().to_string(), true)
@@ -795,38 +1222,48 @@ fn classify_statement(raw: &str) -> Result<ScssItem, CompilerError> {
         return Ok(ScssItem::Statement(raw.to_string()));
     }
 
-    let colon = raw.find(':').ok_or_else(|| {
-        CompilerError::create("VUI010", format!("invalid CSS declaration '{}'", raw))
-    })?;
+    let colon = raw
+        .find(':')
+        .ok_or_else(|| CompilerError::create("VUI010", "invalid CSS declaration syntax"))?;
     let prop = raw[..colon].trim().to_string();
     let value = raw[colon + 1..].trim().to_string();
     Ok(ScssItem::Declaration { prop, value })
 }
 
 fn parse_use_rule(raw: &str) -> Result<ScssItem, CompilerError> {
+    let bytes = raw.as_bytes();
     let first_quote = raw
         .find(['\'', '"'])
-        .ok_or_else(|| CompilerError::create("VUI010", format!("missing quote in '{}'", raw)))?;
-    let quote_char = raw.as_bytes()[first_quote] as char;
-    let rest = &raw[first_quote + 1..];
-    let end_quote = rest
-        .find(quote_char)
-        .ok_or_else(|| CompilerError::create("VUI010", format!("unclosed quote in '{}'", raw)))?;
-    let target = rest[..end_quote].to_string();
-    let tail = rest[end_quote + 1..].trim();
+        .ok_or_else(|| CompilerError::create("VUI010", "missing quote in @use/@forward rule"))?;
+    let quote_byte = bytes[first_quote];
+    let mut cursor = first_quote + 1;
+    let mut end_quote_opt: Option<usize> = None;
+    while cursor < bytes.len() {
+        if bytes[cursor] == quote_byte && is_unescaped(bytes, cursor) {
+            end_quote_opt = Some(cursor);
+            break;
+        }
+        cursor += 1;
+    }
+    let end_quote = end_quote_opt
+        .ok_or_else(|| CompilerError::create("VUI010", "unclosed quote in @use/@forward rule"))?;
+    let target = raw[first_quote + 1..end_quote].to_string();
+    let tail = raw[end_quote + 1..].trim();
 
     let mut overrides = Vec::new();
     if let Some(with_idx) = tail.find("with") {
         let after_with = tail[with_idx + 4..].trim();
         if let (Some(open), Some(close)) = (after_with.find('('), after_with.rfind(')')) {
-            let inner = &after_with[open + 1..close];
-            for entry in split_top_level_commas(inner) {
-                let trimmed = entry.trim();
-                if let Some(stripped) = trimmed.strip_prefix('$') {
-                    if let Some(colon) = stripped.find(':') {
-                        let k = stripped[..colon].trim().to_string();
-                        let v = stripped[colon + 1..].trim().to_string();
-                        overrides.push((k, v));
+            if open < close {
+                let inner = &after_with[open + 1..close];
+                for entry in split_top_level_commas(inner) {
+                    let trimmed = entry.trim();
+                    if let Some(stripped) = trimmed.strip_prefix('$') {
+                        if let Some(colon) = stripped.find(':') {
+                            let k = stripped[..colon].trim().to_string();
+                            let v = stripped[colon + 1..].trim().to_string();
+                            overrides.push((k, v));
+                        }
                     }
                 }
             }
@@ -834,6 +1271,16 @@ fn parse_use_rule(raw: &str) -> Result<ScssItem, CompilerError> {
     }
 
     Ok(ScssItem::UseRule { target, overrides })
+}
+
+fn is_unescaped(bytes: &[u8], idx: usize) -> bool {
+    let mut backslash_count = 0usize;
+    let mut k = idx;
+    while k > 0 && bytes[k - 1] == b'\\' {
+        backslash_count += 1;
+        k -= 1;
+    }
+    (backslash_count & 1) == 0
 }
 
 fn find_matching_brace(src: &str, open_idx: usize) -> Result<usize, CompilerError> {
@@ -845,17 +1292,11 @@ fn find_matching_brace(src: &str, open_idx: usize) -> Result<usize, CompilerErro
     while i < bytes.len() {
         let b = bytes[i];
         if let Some(q) = in_quote {
-            if b == q && (i == 0 || bytes[i - 1] != b'\\') {
+            if b == q && is_unescaped(bytes, i) {
                 in_quote = None;
             }
             i += 1;
             continue;
-        }
-        if b == b'#' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
-            if let Some(rel_end) = src[i + 2..].find('}') {
-                i += 3 + rel_end;
-                continue;
-            }
         }
         match b {
             b'"' | b'\'' => in_quote = Some(b),
@@ -887,7 +1328,7 @@ fn strip_comments(src: &str) -> String {
         let b = bytes[i];
         if let Some(q) = in_quote {
             out.push(b as char);
-            if b == q && (i == 0 || bytes[i - 1] != b'\\') {
+            if b == q && is_unescaped(bytes, i) {
                 in_quote = None;
             }
             i += 1;
@@ -908,9 +1349,12 @@ fn strip_comments(src: &str) -> String {
         if b == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
             i += 2;
             while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                if bytes[i] == b'\n' {
+                    out.push('\n');
+                }
                 i += 1;
             }
-            i += 2;
+            i = (i + 2).min(bytes.len());
             continue;
         }
         out.push(b as char);

@@ -352,7 +352,7 @@ export function buildAll(): {
     "utf8"
   );
   fs.writeFileSync(
-    path.join(REPO_ROOT, "packages", "ui", "AGENT.md"),
+    path.join(REPO_ROOT, "packages", "ui", "REFERENCE.md"),
     agentMarkdown,
     "utf8"
   );

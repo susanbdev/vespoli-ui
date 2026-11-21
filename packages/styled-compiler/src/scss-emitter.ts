@@ -315,6 +315,11 @@ export function emitComponentScss(comp: ComponentAst): string {
 
   const ruleBlocks: string[] = [];
   for (const rule of comp.propRules) {
+    if (rule.matchValue !== true && !/^[A-Za-z0-9_-]+$/.test(rule.matchValue)) {
+      throw new Error(
+        `VUI001: Unsafe union matchValue '${rule.matchValue}' on ${comp.name}.${rule.prop}`
+      );
+    }
     const modClass =
       rule.matchValue === true
         ? `.vui-${comp.name}--${toKebab(rule.prop)}`
@@ -328,9 +333,10 @@ export function emitComponentScss(comp: ComponentAst): string {
       : "";
   const extraSpacerRules =
     comp.name === "VirtualSpacer"
-      ? Array.from(
-          { length: 18 },
-          (_, b) => `  [data-bit="${b}"] { height: ${36 * 2 ** b}px; }`
+      ? Array.from({ length: 18 }, (_, b) =>
+          b === 0
+            ? `  [data-bit="0"] { height: $RowHeight; }`
+            : `  [data-bit="${b}"] { height: $RowHeight * ${2 ** b}; }`
         ).join("\n")
       : "";
   const allBlocks = [baseBlock, extraSpacerRules, ...ruleBlocks].filter(

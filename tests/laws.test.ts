@@ -489,12 +489,296 @@ describe("Law 7 & Accessibility -- Conservation of UI Matter, Dialog Morphs, & R
     assert.ok(diags.some((d) => d.code === "VUI007"));
   });
 
-  it("keeps AGENT.md synchronized with manifest.json", () => {
-    const agentText = fs.readFileSync(
-      path.join(REPO_ROOT, "packages", "ui", "AGENT.md"),
+  it("keeps REFERENCE.md synchronized with manifest.json and bans nested AGENT.md", () => {
+    assert.equal(
+      fs.existsSync(path.join(REPO_ROOT, "packages", "ui", "AGENT.md")),
+      false,
+      "nested packages/ui/AGENT.md must not exist"
+    );
+    const refText = fs.readFileSync(
+      path.join(REPO_ROOT, "packages", "ui", "REFERENCE.md"),
       "utf8"
     );
-    assert.ok(agentText.includes("## Primitives (66)"));
-    assert.ok(Buffer.byteLength(agentText, "utf8") <= 3072);
+    assert.ok(refText.includes("## Primitives (66)"));
+    assert.ok(Buffer.byteLength(refText, "utf8") <= 3072);
+  });
+});
+
+describe("Adversarial Security & Hardening Regressions", () => {
+  it("enforces Crumb href scheme allowlist and strips control/whitespace bytes", () => {
+    const hostileHrefs = [
+      "javascript:alert(1)",
+      "\t\njava\rscript:alert(1)",
+      String.fromCharCode(1, 32) + "JaVaScRiPt:evil()",
+      "data:text/html,<script>alert(1)</script>",
+      "vbscript:msgbox(1)",
+      "//evil.example/phish",
+      "/\\evil.example/phish",
+      "ftp://files.example/x"
+    ];
+    for (const bad of hostileHrefs) {
+      assert.equal(ui.sanitizeHref(bad), undefined, `Expected ${JSON.stringify(bad)} to be rejected`);
+      const root = createTestRoot();
+      const el = root.render(createVNode(ui.Crumb, { href: bad, children: "Link" }))!;
+      assert.equal(el.tagName, "SPAN", `Hostile href ${JSON.stringify(bad)} must degrade to <span>`);
+      assert.equal(el.getAttribute("href"), null);
+    }
+
+    const validHrefs: ReadonlyArray<readonly [string, string]> = [
+      ["https://vespoli.dev/docs", "https://vespoli.dev/docs"],
+      ["  https://vespoli.dev/clean\n", "https://vespoli.dev/clean"],
+      ["http://localhost:8787/ok", "http://localhost:8787/ok"],
+      ["mailto:sec@vespoli.dev", "mailto:sec@vespoli.dev"],
+      ["/commits/123", "/commits/123"],
+      ["#section-2", "#section-2"],
+      ["?filter=active", "?filter=active"]
+    ];
+    for (const [raw, expected] of validHrefs) {
+      const root = createTestRoot();
+      const el = root.render(createVNode(ui.Crumb, { href: raw, children: "Safe" }))!;
+      assert.equal(el.tagName, "A");
+      assert.equal(el.getAttribute("href"), expected);
+    }
+  });
+
+  it("strips style and dangerouslySetInnerHTML at runtime across all 66 primitives", () => {
+    const ALL_66: ReadonlyArray<readonly [string, Record<string, unknown>?]> = [
+      ["Container"], ["Row"], ["Col"], ["Shell"], ["SplitView"], ["Card"],
+      ["Stack"], ["Toolbar"], ["Heading"], ["Breadcrumbs"], ["Crumb", { href: "/ok" }],
+      ["Button"], ["IconButton", { "aria-label": "Close" }], ["Input"], ["Select"],
+      ["Checkbox"], ["Label"], ["Field"], ["FieldHint"], ["FieldError"],
+      ["RangeField"], ["Segments"], ["Segment"], ["Tabs"], ["Tab"], ["TabPanel"],
+      ["Pagination"], ["FacetBar"], ["FacetGroup"], ["FacetList"], ["FacetItem"],
+      ["ChipBar"], ["Chip"], ["Table"], ["TableHead"], ["TableBody"], ["TableRow"],
+      ["HeaderCell"], ["TableCell"], ["VirtualTable"], ["VirtualSpacer", { bit: 0 }],
+      ["TreeTable"], ["TreeRow", { level: 1 }], ["DagRail"],
+      ["DagLane", { edge: "straight", node: "commit" }], ["Properties"],
+      ["PropertyItem"], ["Disclosure"], ["Summary"], ["Code"], ["CodeBlock"],
+      ["JsonTree"], ["Empty"], ["Badge"], ["ProofBadge"], ["DigestChip"],
+      ["Notice"], ["AlertBanner"], ["Metrics"], ["MetricItem"],
+      ["Icon", { name: "shield" }], ["Dialog", { open: false }],
+      ["Inspector", { open: false }], ["CanvasStage"], ["RangeBar"], ["HeatmapCanvas"]
+    ];
+    assert.equal(ALL_66.length, 66);
+    for (const [name, baseProps] of ALL_66) {
+      const root = createTestRoot();
+      const el = root.render(
+        createVNode(ui[name], {
+          ...(baseProps ?? {}),
+          style: { color: "red" },
+          dangerouslySetInnerHTML: { __html: "<img onerror=alert(1)>" }
+        })
+      )!;
+      assert.equal(el.getAttribute("style"), null, `${name} leaked style attribute`);
+      assert.equal(
+        el.getAttribute("dangerouslysetinnerhtml"),
+        null,
+        `${name} leaked dangerouslySetInnerHTML`
+      );
+      assert.equal(
+        root.document.cspViolations.length,
+        0,
+        `${name} caused CSP/XSS violation`
+      );
+    }
+  });
+
+  it("blocks Object.prototype pollution in Button, Heading, Grid, and Icon lookup maps and rejects selector injection", () => {
+    const root = createTestRoot();
+    for (const protoKey of ["__proto__", "constructor", "toString", "valueOf"]) {
+      const btn = root.render(createVNode(ui.Button, { variant: protoKey }))!;
+      assert.ok(!btn.className.includes("function"), `Button leaked prototype for ${protoKey}`);
+      assert.equal(btn.className, "vui-Button");
+
+      const h = root.render(createVNode(ui.Heading, { size: protoKey }))!;
+      assert.ok(!h.className.includes("function"), `Heading leaked prototype for ${protoKey}`);
+      assert.equal(h.className, "vui-Heading vui-Heading--size-md");
+
+      const icon = root.render(createVNode(ui.Icon, { name: protoKey, size: protoKey }))!;
+      assert.ok(!icon.className.includes("function"));
+      assert.equal(icon.children.length, 0, `Icon leaked prototype child for ${protoKey}`);
+    }
+
+    const injectedSrc = `
+      import { styled, css } from "@vespoli/styled";
+      export interface EvilProps { variant?: "ok" | "x { color: red } .pwn"; }
+      export const EvilBtn = styled.button<EvilProps>\`
+        \${p => p.variant === "x { color: red } .pwn" && css\`color: red;\`}
+      \`;
+    `;
+    const compiled = compileModule(injectedSrc, "evil.tsx");
+    assert.ok(
+      compiled.diagnostics.some((d) => d.code === "VUI001"),
+      "Must reject unsafe union literal characters with VUI001"
+    );
+  });
+
+  it("validates same-origin HTTP(S) workerUrl, terminates owned Workers on unmount, and bounds canvas buffers", () => {
+    const prevWorker = (globalThis as Record<string, unknown>).Worker;
+    const spawned: Array<{ url: string; terminated: boolean }> = [];
+    class MockWorker {
+      public url: string;
+      public terminated = false;
+      constructor(url: string) {
+        this.url = url;
+        spawned.push(this);
+      }
+      postMessage(_msg: unknown): void {}
+      terminate(): void {
+        this.terminated = true;
+      }
+    }
+    (globalThis as Record<string, unknown>).Worker = MockWorker;
+
+    try {
+      for (const badUrl of [
+        "https://evil.example/worker.js",
+        "javascript:alert(1)",
+        "data:text/javascript,postMessage(1)",
+        "blob:https://vespoli.local/1234"
+      ]) {
+        const badRoot = createTestRoot();
+        assert.throws(() => {
+          badRoot.render(createVNode(ui.CanvasStage, { workerUrl: badUrl }));
+        }, /Blocked cross-origin|Invalid workerUrl/);
+      }
+      assert.equal(spawned.length, 0, "No Worker may be constructed for rejected URLs");
+
+      const strictRoot = createTestRoot({ strictMode: true });
+      strictRoot.render(
+        createVNode(StrictMode, {
+          children: createVNode(ui.HeatmapCanvas, {
+            workerUrl: "/workers/heatmap.js",
+            buffer: new Float32Array([1, 2, 3, 4])
+          })
+        })
+      );
+      assert.equal(spawned.length, 1);
+      assert.equal(spawned[0]!.url, "https://vespoli.local/workers/heatmap.js");
+      assert.equal(spawned[0]!.terminated, false, "StrictMode re-run must keep owned Worker alive");
+
+      strictRoot.unmount();
+      assert.equal(spawned[0]!.terminated, true, "Owned Worker must terminate on unmount");
+    } finally {
+      (globalThis as Record<string, unknown>).Worker = prevWorker;
+    }
+
+    assert.throws(() => ui.createRingBuffer(NaN), RangeError);
+    assert.throws(() => ui.createRingBuffer(Infinity), RangeError);
+    assert.throws(() => ui.createRingBuffer(0), RangeError);
+    assert.throws(() => ui.createRingBuffer(16_777_217), RangeError);
+    assert.throws(() => ui.decimateMinMax(new Float32Array(8), NaN), RangeError);
+    assert.throws(() => ui.decimateMinMax(new Float32Array(8), 16_385), RangeError);
+    assert.throws(
+      () => ui.interpolateColumns(new Float32Array(4), new Float32Array(4), NaN),
+      RangeError
+    );
+  });
+
+  it("detects CRLF, banned effect/ref/beacon/SSE/BroadcastChannel/multiline-fetch/style/IconButton bypasses, and compiles Vite/esbuild CSS", () => {
+    const crlfDiags = auditSourceLaws("export const A = 1;\r\n", { isUiPackage: true });
+    assert.ok(crlfDiags.some((d) => d.code === "VUI009"));
+
+    const sneaky = `
+      import { useEffect, useLayoutEffect, useInsertionEffect, useRef, useImperativeHandle } from "react";
+      export function Bad(el: any) {
+        useEffect(() => {}, []);
+        useLayoutEffect(() => {}, []);
+        useInsertionEffect(() => {}, []);
+        const r = useRef(null);
+        useImperativeHandle(r, () => ({}));
+        navigator.sendBeacon("/x");
+        new EventSource("/events");
+        new BroadcastChannel("sync");
+        globalThis["fetch"]("/sneak");
+        fetch
+          ("/multiline");
+        el.style.top = "0";
+        return (
+          <div style = {{ top: 0 }}>
+            <span style='left:0' />
+            <IconButton
+              onClick={() => {}}
+            />
+          </div>
+        );
+      }
+    `;
+    const diags = auditSourceLaws(sneaky, { isUiPackage: true });
+    assert.ok(diags.filter((d) => d.code === "VUI002").length >= 10);
+    assert.ok(diags.filter((d) => d.code === "VUI003").length >= 3);
+    assert.equal(diags.filter((d) => d.code === "VUI004").length, 1);
+
+    // Vite query-string IDs, HMR deduplication, and valid CSS compilation
+    const vite = createVitePlugin();
+    const src = `
+      import { styled, t } from "@vespoli/styled";
+      export const Pill = styled.span\`padding: \${t.space[2]};\`;
+    `;
+    assert.ok(vite.transform(src, "/app/Pill.tsx?v=1"));
+    assert.ok(vite.transform(src, "/app/Pill.tsx?v=2"));
+    const cssOut = vite.load("\0virtual:vespoli-styled.css") ?? "";
+    assert.ok(!cssOut.includes("@use"), "Vite virtual CSS must be compiled CSS, not raw SCSS");
+    assert.ok(!cssOut.includes("$space-"), "Vite virtual CSS must resolve SCSS variables");
+    assert.equal(
+      cssOut.split(".vui-Pill {").length - 1,
+      1,
+      "HMR transforms of the same module must not duplicate CSS rules"
+    );
+
+    // esbuild CSS extraction & preservation
+    const sandboxDir = path.join(REPO_ROOT, "target", "esbuild_plugin_sandbox");
+    fs.mkdirSync(sandboxDir, { recursive: true });
+    const sampleTsx = path.join(sandboxDir, "SampleTag.tsx");
+    fs.writeFileSync(sampleTsx, src, "utf8");
+    try {
+      const esb = createEsbuildPlugin();
+      let loadHandler: ((args: { path: string }) => unknown) | undefined;
+      esb.setup({
+        onLoad(opts, cb) {
+          if (!opts.namespace) loadHandler = cb;
+        }
+      });
+      assert.ok(loadHandler);
+      loadHandler({ path: sampleTsx });
+      loadHandler({ path: sampleTsx });
+      const esbCss = esb.getCss();
+      assert.ok(esbCss.includes(".vui-Pill"));
+      assert.ok(!esbCss.includes("@use"));
+      assert.equal(esbCss.split(".vui-Pill {").length - 1, 1);
+    } finally {
+      fs.rmSync(sandboxDir, { recursive: true, force: true });
+    }
+  });
+
+  it("guards JsonTree against circular references via WeakSet and enforces maxDepth", () => {
+    const cyclic: Record<string, unknown> = { id: "root" };
+    cyclic.self = cyclic;
+
+    let deep: Record<string, unknown> = { leaf: "end" };
+    for (let i = 0; i < 45; i += 1) {
+      deep = { next: deep };
+    }
+
+    const root = createTestRoot();
+    const cycEl = root.render(createVNode(ui.JsonTree, { data: cyclic }))!;
+    assert.equal(cycEl.tagName, "UL");
+    const serialized = JSON.stringify(cycEl.children.map((c) => (typeof c === "string" ? c : c.tagName)));
+    assert.ok(serialized.length > 0);
+
+    const boundedEl = root.render(createVNode(ui.JsonTree, { data: deep, maxDepth: 4 }))!;
+    assert.equal(boundedEl.tagName, "UL");
+  });
+
+  it("scales VirtualSpacer heights when $RowHeight is overridden in SCSS", () => {
+    const scssDir = path.join(REPO_ROOT, "dist", "scss");
+    const cssOut = compileScssInline(
+      `@use "vespoli-ui/scss" with ($RowHeight: 44px);`,
+      scssDir,
+      true
+    );
+    assert.ok(cssOut.includes('[data-bit="0"]{height:44px}'));
+    assert.ok(cssOut.includes('[data-bit="1"]{height:88px}'));
+    assert.ok(cssOut.includes('[data-bit="3"]{height:352px}'));
   });
 });
