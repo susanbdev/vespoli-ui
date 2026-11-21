@@ -1,4 +1,4 @@
-# `vespoli-ui` v1.0 — Canonical Architecture & Engineering Specification
+# `vespoli-ui` v1.0 -- Canonical Architecture & Engineering Specification
 
 **Repository**: `susanbdev/vespoli-ui`  
 **Status**: Canonical v1.0 Specification  
@@ -17,50 +17,50 @@
 
 Every file in this repository **MUST** obey seven architectural laws:
 
-### Law 1 — 100% Dumb, Stateless `1-In → 1-Out` Primitives (`Props → Element`)
-* Every component and helper **MUST** be a single-focus `1-in → 1-out` pure function (`Props → JSX.Element`) with zero external runtime dependencies.
+### Law 1 -- 100% Dumb, Stateless `1-In -> 1-Out` Primitives (`Props -> Element`)
+* Every component and helper **MUST** be a single-focus `1-in -> 1-out` pure function (`Props -> JSX.Element`) with zero external runtime dependencies.
 * The following APIs are **strictly banned** inside `packages/ui/src/**`: `useState`, `useReducer`, `useContext`, `createContext`, `useSyncExternalStore`, `fetch`, `XMLHttpRequest`, `WebSocket`, timers (`setTimeout`, `setInterval`), and mutable module-level state.
 * **Permitted DOM-only synchronization**:
   1. Calling native `HTMLDialogElement.showModal()` / `close()` inside an effect when a controlled `open: boolean` prop changes.
-  2. Handing off an `HTMLCanvasElement` via `transferControlToOffscreen()` to a visualization worker.
-  3. A single passive capture listener (`pointerdown` / `keydown`) recording a `WeakRef<HTMLElement>` to the last user-activated interactive trigger for origin-bound view transitions (Law 7).
+  2. Handing off an `HTMLCanvasElement` via `transferControlToOffscreen()` to a validated same-origin visualization worker, tracked in a garbage-collected **`WeakMap<HTMLCanvasElement, WorkerChannel>`** (permitted strictly for DOM handoff idempotency; terminates the dedicated `Worker` via `worker.terminate()` on real DOM unmount when `!canvas.isConnected` so zero worker threads, ring buffers, or unmounted DOM nodes leak) so React 19 `<StrictMode>` double-effect invocation reuses the existing `OffscreenCanvas` worker channel instead of throwing `InvalidStateError`.
+  3. A single passive capture listener (`pointerdown` / `keydown`) recording a `WeakMap<Document, WeakRef<HTMLElement>>` entry for the last user-activated interactive trigger for origin-bound view transitions (Law 7, isolated per `Document` for SSR and parallel test roots).
 
-### Law 2 — 1 JSX Tag = 1 Honest Native HTML Element & Domain Noun / Verb Ontology
+### Law 2 -- 1 JSX Tag = 1 Honest Native HTML Element & Domain Noun / Verb Ontology
 * Every exported component **MUST** render **exactly one** semantic HTML element matching its name and purpose (`Button` $\to$ `<button>`, `Input` $\to$ `<input>`, `Checkbox` $\to$ `<input type="checkbox">`, `Select` $\to$ `<select>`, `Dialog` $\to$ `<dialog>`, `Disclosure` $\to$ `<details>`, `Summary` $\to$ `<summary>`, `Table` $\to$ `<table>`, `CanvasStage` $\to$ `<canvas>`, `Card` $\to$ `<section>`).
-* **Domain Nouns = Components & Data; Verbs = Functions**: Components, props interfaces, and modules are **Domain Nouns** describing what they **are** (`1–2` words by default: `Button`, `IconButton`, `FacetList`, `ChipBar`, `HeaderCell`, `RangeBar`; `3`-word hard ceiling **only** when removing genuine ambiguity). Standalone helpers and transitions are **Verbs** (`transitionTo()`, `trackOrigin()`, `moveFocus()`). Catch-all `utils`, `helpers`, and `common` files are banned.
+* **Domain Nouns = Components & Data; Verbs = Functions**: Components, props interfaces, and modules are **Domain Nouns** describing what they **are** (`1-2` words by default: `Button`, `IconButton`, `FacetList`, `ChipBar`, `HeaderCell`, `RangeBar`, `RangeField`, `VirtualSpacer`; `3`-word hard ceiling **only** when removing genuine ambiguity). Standalone helpers and transitions are **Verbs** (`transitionTo()`, `trackOrigin()`, `moveFocus()`). Catch-all `utils`, `helpers`, and `common` files are banned.
 * **Hidden wrapper `<div>`s are banned.** No component may secretly wrap an `<input>` or `<button>` inside an extra `<div>` or `<span>`.
 * **`slots` and `slotClasses` APIs are banned.** Multi-element structures are built strictly through explicit JSX composition (`<Field><Label htmlFor="id">Name</Label><Input id="id" /></Field>`).
 * **`*Container`, `*Root`, `*Wrapper`, and `*Contract` suffixes on component/type names or SCSS variables are banned.** The component's PascalCase noun (`Button`, `Input`, `Field`, `Card`) **is always** its outer box.
 
-### Law 3 — Colocated `styled` Templates Extracted Statically to Idiomatic SCSS (`0 B` Runtime)
-* Components are authored with colocated `styled.<tag>` tagged template literals (`@vespoli/styled`) using real kebab-case CSS, `&` nesting (`&.active`, `&:checked`, `&[open]`, `&:hover:not(:disabled)`), native CSS `transition` rules, and ~22 flat semantic tokens.
+### Law 3 -- Colocated `styled` Templates Extracted Statically to Idiomatic SCSS (`0 B` Runtime)
+* Components are authored with colocated `styled.<tag>` tagged template literals (`@vespoli/styled`) using real kebab-case CSS, `&` nesting (`&.active`, `&:checked`, `&[open]`, `&:hover:not(:disabled)`), native CSS `transition` rules, and 42 flat semantic tokens.
 * During compilation (`@vespoli/styled-compiler`), all `styled` and `css` tagged templates **MUST** be statically erased from JavaScript and emitted as:
   1. Modular, human-readable `.scss` partials (`dist/scss/`) with `!default` component variables (`$ButtonPaddingX`, `$InputRadius`, etc.) and CSS `@layer` scoping.
   2. Precompiled, minified `.css` bundles (`dist/styles.css` and per-component `dist/css/<Component>.css`) compiled via Grass (Rust Sass) + LightningCSS.
   3. Zero-dependency ESM JavaScript (`dist/esm/`) containing **zero** runtime CSS parsers, **zero** `<style>` sheet mutations, **zero** runtime prop-filtering loops, and **zero** wrapper Fiber components.
 
-### Law 4 — Zero Inline `style` Attributes (Strict `style-src 'self'` CSP + Zero Object Churn)
-* Emitting JSX `style={{ ... }}` or DOM `style="..."` attributes is **banned** across all components.
+### Law 4 -- Zero Inline `style` or Raw HTML Injection (Strict `style-src 'self'` CSP + Zero Object Churn)
+* Emitting JSX `style={{ ... }}`, DOM `style="..."`, or `dangerouslySetInnerHTML` attributes is **banned** across all 66 primitives; both `style` and `dangerouslySetInnerHTML` **MUST** be omitted from exported TypeScript prop types and destructured out before runtime `...props` spreads.
 * Dynamic alignment, sizing, and state **MUST** map to typed props compiled into static classes or `data-*` attributes.
 * Applications consuming `vespoli-ui` **MUST** function without violation under:
   ```http
   Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; worker-src 'self'; frame-ancestors 'none'
   ```
 
-### Law 5 — Hard Zero-SVG Mandate (`svg_count == 0`) & `OffscreenCanvas` Data Viz
+### Law 5 -- Hard Zero-SVG Mandate (`svg_count == 0`) & `OffscreenCanvas` Data Viz
 * `<svg>`, `<path>`, `.svg` asset files, and `data:image/svg+xml` URIs are **banned** across source, tests, docs, and build outputs.
-* **UI Icons & Affordances**: Simple directional/state indicators (chevrons, carets, checkmarks, close `×`, sort indicators, disclosure arrows, status dots) **MUST** use pure CSS geometric borders/transforms on a single `<span>` (`0 B` network cost). Complex monochrome symbols (`shield`, `branch`, `lock`, `merkle`, `commit`, `snapshot`, `alert`, `terminal`) **MUST** use the bundled sub-`2 KB` subset WOFF2 monochrome glyph font (`font-display: block`, `aria-hidden="true"`), rendered via the OS/GPU glyph atlas with native `currentColor` and `forced-colors` support.
+* **UI Icons & Affordances**: Simple directional/state indicators (chevrons, carets, checkmarks, close `x`, sort indicators, disclosure arrows, status dots) **MUST** use pure CSS geometric borders/transforms on a single `<span>` (`0 B` network cost). Complex monochrome symbols (`shield`, `branch`, `lock`, `merkle`, `commit`, `snapshot`, `alert`, `terminal`) **MUST** use the bundled sub-`2 KB` subset WOFF2 monochrome glyph font (`font-display: block`, `aria-hidden="true"`), rendered via the OS/GPU glyph atlas with native `currentColor` and `forced-colors` support.
 * **Inline Branch/Commit Graphs (`DagRail`)**: **MUST** use pure CSS box/arc lane `<span>`s (`::before` solid/dashed hairlines + `::after` `border-radius` quarter-circle connectors + circular node rings).
-* **High-Scale Data Visualization (`CanvasStage`, `RangeBar`, `HeatmapCanvas`)**: **MUST** use `styled.canvas` (`1 tag = 1 <canvas>`) with `OffscreenCanvas` worker rendering over binary typed arrays (`Float32Array` / `Uint32Array` ring buffers), capable of rendering and smoothly transitioning `100,000+` points at `60–120 fps` with `0` React re-renders.
+* **High-Scale Data Visualization (`CanvasStage`, `RangeBar`, `HeatmapCanvas`)**: **MUST** use `styled.canvas` (`1 tag = 1 <canvas>`) with `OffscreenCanvas` worker rendering over binary typed arrays (`Float32Array` / `Uint32Array` ring buffers), capable of rendering and smoothly transitioning `100,000+` points at `60-120 fps` with `0` React re-renders.
 
-### Law 6 — Bootstrap-Ergonomic 12-Column Structural Grid (`Container` / `Row` / `Col`)
+### Law 6 -- Bootstrap-Ergonomic 12-Column Structural Grid (`Container` / `Row` / `Col`)
 * Flexbox **MUST NEVER** be used as a 2D page/section column grid (`min-width: auto` content blowouts on long SHAs, URLs, `<pre>` blocks, and wide tables are unacceptable).
 * Structural page and section layouts **MUST** use `Container` $\to$ `Row` $\to$ `Col` implementing Bootstrap's 12-column responsive contract (`xs`, `sm`, `md`, `lg`, `xl`, `xxl`, offsets, gutters, `fluid`) over **rigid CSS Grid tracks** (`display: grid; grid-template-columns: repeat(12, minmax(0, 1fr))`) and native `gap`.
 * 1D Flexbox primitives (`Stack`, `Toolbar`) **MUST** be used strictly *inside* structured `<Col>` elements for linear alignment and distribution.
 
-### Law 7 — Conservation of UI Matter (Nothing Ever Appears Out of Thin Air)
+### Law 7 -- Conservation of UI Matter (Nothing Ever Appears Out of Thin Air)
 * Standalone disembodied `<Spinner />` components and teleporting modals/views are **banned**.
-* Every reveal, navigation, modal open/close, and async loading state **MUST** physically originate from (and collapse back into) the interactive element the user activated, using native C++ GPU compositor View Transitions (`document.startViewTransition`, `@view-transition`, `:active-view-transition-type(...)`), `@starting-style`, and `transition-behavior: allow-discrete`—with **zero** rubber-stretched text (`overflow: clip; object-fit: none`) and **zero** JS spring/animation libraries.
+* Every reveal, navigation, modal open/close, and async loading state **MUST** physically originate from (and collapse back into) the interactive element the user activated, using native C++ GPU compositor View Transitions (`document.startViewTransition`, `@view-transition`, `:active-view-transition-type(...)`), `@starting-style`, and `transition-behavior: allow-discrete` -- with **zero** rubber-stretched text (`overflow: clip; object-fit: none`) and **zero** JS spring/animation libraries.
 
 ---
 
@@ -68,53 +68,55 @@ Every file in this repository **MUST** obey seven architectural laws:
 
 ```text
 vespoli-ui/
-├── spec.md                         # Canonical specification (this file)
-├── README.md
-├── package.json                    # Workspace root (private)
-├── tsconfig.base.json
-├── packages/
-│   ├── styled/                     # @vespoli/styled — compile-time types & authoring tags (0 B runtime)
-│   │   └── src/
-│   │       ├── index.ts            # styled.<tag>, styled(Comp), css, media, t
-│   │       └── tokens.ts           # ~22 flat semantic token definitions
-│   ├── styled-compiler/            # @vespoli/styled-compiler — TS + LightningCSS -> ESM + SCSS + CSS
-│   │   └── src/
-│   │       ├── ast-pass.ts         # Type-driven prop stripping, JSX fiber inlining, VUIxxx diagnostics
-│   │       ├── scss-emitter.ts     # Emits _tokens.scss, _mixins.scss, _<Component>.scss + !default vars
-│   │       ├── css-builder.ts      # Grass (Rust Sass) + LightningCSS bundler
-│   │       ├── vite.ts             # Optional Vite/Rollup plugin for Tier-3 consumer apps
-│   │       └── esbuild.ts          # Optional esbuild plugin for Tier-3 consumer apps
-│   └── ui/                         # vespoli-ui — published zero-dependency component library
-│       ├── package.json
-│       ├── AGENT.md                # < 3 KB (~800 token) machine-readable ground truth for AI agents
-│       ├── assets/
-│       │   └── vui-glyphs.woff2    # < 2 KB monochrome subset glyph font
-│       └── src/
-│           ├── index.ts            # Single flat tree-shakeable barrel (sideEffects: false)
-│           ├── grid.tsx            # Container, Row, Col (12-col CSS Grid)
-│           ├── layout.tsx          # Shell, Card, SplitView, Stack, Toolbar, Heading, Breadcrumbs
-│           ├── controls.tsx        # Button, IconButton, Input, Select, Checkbox, Label, Field, Segments, Tabs, Pagination
-│           ├── filter.tsx          # FacetBar, FacetGroup, FacetList, ChipBar
-│           ├── table.tsx           # Table, TableHead, TableBody, TableRow, HeaderCell, TableCell, VirtualTable, TreeTable
-│           ├── data.tsx            # Properties, PropertyItem, Disclosure, Summary, Code, CodeBlock, JsonTree, Empty
-│           ├── status.tsx          # Badge, ProofBadge, DigestChip, Notice, AlertBanner, Metrics, MetricItem, Icon
-│           ├── overlay.tsx         # Dialog, Inspector
-│           ├── canvas.tsx          # CanvasStage, RangeBar, HeatmapCanvas + offscreen worker protocol
-│           ├── transitions.ts      # Origin WeakRef tracker, transitionTo(), aperture morph helpers
-│           └── a11y.ts             # Pure stateless roving-tabindex & keyboard navigation functions
-├── bench/
-│   ├── budgets.json                # Enforced byte, render-ms, re-render-count, a11y, CSP, and 0-SVG budgets
-│   └── run-bench.ts                # Playwright + Lighthouse + React <Profiler> verification harness
-└── scripts/
-    ├── check-package.ts            # Verifies 0 runtime style bytes, 0 inline styles, 0 <svg>, export integrity
-    └── check-scss.ts               # Compiles every generated _*.scss partial standalone & checks determinism
+|-- AGENTS.md                       # Sole root depth-0 agent constitution (only AGENT*.md file allowed)
+|-- spec.md                         # Canonical specification (this file)
+|-- README.md
+|-- package.json                    # Workspace root (private)
+|-- pnpm-lock.yaml                  # frozen-lockfile = true, ignore-scripts = true
+|-- tsconfig.base.json
+|-- packages/
+|   |-- styled/                     # @vespoli/styled -- compile-time types & authoring tags (0 B runtime)
+|   |   +-- src/
+|   |       |-- index.ts            # styled.<tag>, styled(Comp), css, media, t
+|   |       +-- tokens.ts           # 42 flat semantic token definitions
+|   |-- styled-compiler/            # @vespoli/styled-compiler -- TS + LightningCSS -> ESM + SCSS + CSS
+|   |   +-- src/
+|   |       |-- ast-pass.ts         # Prop/style/HTML stripping, null-proto maps, JSX fiber inlining, VUIxxx
+|   |       |-- scss-emitter.ts     # Confined base_dir @use/@forward, bounded $var, _<Component>.scss
+|   |       |-- css-builder.ts      # Grass (Rust Sass) + LightningCSS bundler (base_dir confined)
+|   |       |-- vite.ts             # Optional Vite/Rollup plugin for Tier-3 consumer apps
+|   |       +-- esbuild.ts          # Optional esbuild plugin for Tier-3 consumer apps
+|   +-- ui/                         # vespoli-ui -- published zero-dependency component library
+|       |-- package.json
+|       |-- REFERENCE.md            # < 3 KB (~800 token) generated API reference (nested AGENT*.md banned)
+|       |-- assets/
+|       |   +-- vui-glyphs.woff2    # < 2 KB monochrome subset glyph font
+|       +-- src/
+|           |-- index.ts            # Single flat tree-shakeable barrel (sideEffects: false)
+|           |-- grid.tsx            # Container, Row, Col (12-col CSS Grid)
+|           |-- layout.tsx          # Shell, Card, SplitView, Stack, Toolbar, Heading, Breadcrumbs
+|           |-- controls.tsx        # Button, IconButton, Input, Select, Checkbox, Label, Field, RangeField, Segments, Tabs, Pagination
+|           |-- filter.tsx          # FacetBar, FacetGroup, FacetList, ChipBar
+|           |-- table.tsx           # Table, TableHead, TableBody, TableRow, HeaderCell, TableCell, VirtualTable, VirtualSpacer, TreeTable
+|           |-- data.tsx            # Properties, PropertyItem, Disclosure, Summary, Code, CodeBlock, JsonTree, Empty
+|           |-- status.tsx          # Badge, ProofBadge, DigestChip, Notice, AlertBanner, Metrics, MetricItem, Icon
+|           |-- overlay.tsx         # Dialog, Inspector
+|           |-- canvas.tsx          # CanvasStage, RangeBar, HeatmapCanvas + WeakMap OffscreenCanvas worker protocol
+|           |-- transitions.ts      # Document WeakMap origin tracker, transitionTo(), aperture morph helpers
+|           +-- a11y.ts             # Pure stateless roving-tabindex & keyboard navigation functions
+|-- bench/
+|   |-- budgets.json                # Enforced byte, render-ms, re-render-count, a11y, CSP, and 0-SVG budgets
+|   +-- run-bench.ts                # Playwright + Lighthouse + React <Profiler> verification harness
++-- scripts/
+    |-- check-package.ts            # Verifies 0 runtime style bytes, 0 inline styles, 0 <svg>, export integrity
+    +-- check-scss.ts               # Compiles every generated _*.scss partial standalone & checks determinism
 ```
 
 ---
 
-## 3. Semantic Token System (Flat, Context-Free, ~22 Tokens Total)
+## 3. Semantic Token System (Flat, Context-Free, 42 Tokens Total)
 
-Fat nested JavaScript theme objects and `<ThemeProvider>` components are **prohibited**. `vespoli-ui` defines a flat set of semantic tokens in `dist/scss/_tokens.scss` (with `!default` flags for compile-time SCSS overrides) mirrored to `--vui-*` CSS custom properties inside `@layer vui.tokens`:
+Fat nested JavaScript theme objects and `<ThemeProvider>` components are **prohibited**. `vespoli-ui` defines 42 flat semantic tokens in `dist/scss/_tokens.scss` (with `$kebab-case` `!default` flags for compile-time SCSS overrides, never colliding with `$PascalCase` component variables) mirrored to `--vui-*` CSS custom properties inside `@layer vui.tokens`:
 
 | Token (`t.*`) | SCSS Variable (`!default`) | CSS Custom Property | Default Dark-First Value | Semantic Role |
 | :--- | :--- | :--- | :--- | :--- |
@@ -136,14 +138,14 @@ Fat nested JavaScript theme objects and `<ThemeProvider>` components are **prohi
 | `t.radius.{sm,md,lg,pill}` | `$radius-sm..pill` | `--vui-radius-sm..pill` | `4px, 6px, 10px, 9999px` | Corner radius scale |
 | `t.size.control.{sm,md,lg}` | `$size-control-sm..lg` | `--vui-size-control-sm..lg` | `28px, 34px, 40px` | Interactive control heights |
 | `t.font.{sans,mono}` | `$font-sans`, `$font-mono` | `--vui-font-sans`, `--vui-font-mono` | System UI stack / Tabular monospace stack | Typography families |
-| `t.ease.{outExpo,tactile}` | `$EaseOutExpo`, `$EaseTactile` | `--vui-ease-out-expo`, `--vui-ease-tactile` | `cubic-bezier(0.16, 1, 0.3, 1)`, `cubic-bezier(0.32, 1.25, 0.64, 1)` | Spatial & interactive transition physics |
+| `t.ease.{outExpo,tactile}` | `$ease-out-expo`, `$ease-tactile` | `--vui-ease-out-expo`, `--vui-ease-tactile` | `cubic-bezier(0.16, 1, 0.3, 1)`, `cubic-bezier(0.32, 1.25, 0.64, 1)` | Spatial & interactive transition physics |
 
 ---
 
-## 4. `@vespoli/styled-compiler` — Transpile-Time `styled` $\to$ SCSS Specification
+## 4. `@vespoli/styled-compiler` -- Transpile-Time `styled` $\to$ SCSS Specification
 
 ### 4.1 Authoring Syntax
-Authors write standard `styled-components` tagged templates with typed style props—**without** `$prop` prefixes:
+Authors write standard `styled-components` tagged templates with typed style props -- **without** `$prop` prefixes:
 
 ```tsx
 import { styled, css, media, t } from '@vespoli/styled';
@@ -220,24 +222,29 @@ export const Button = styled.button.attrs({ type: 'button' })<ButtonStyleProps>`
 ```
 
 ### 4.2 Deterministic AST Transformation Rules
-1. **Compile-Time Style-Prop Stripping (Zero `$` Prefix Tax)**:
+1. **Compile-Time Style-Prop, `style`, & `dangerouslySetInnerHTML` Stripping + Null-Prototype Lookup Maps**:
    * `@vespoli/styled-compiler` inspects the generic type parameter `<ButtonStyleProps>` via the TypeScript TypeChecker.
    * Every property declared on `<ButtonStyleProps>` (`variant`, `compact`, `loading`) MUST have a finite boolean or string/number literal union domain (`'primary' | 'secondary' | ...`, `1 | 2 | ... | 12`).
    * If an interpolation references an unbounded dynamic type (`number`, `string`) or runtime function call, compilation **MUST** fail with `VUI001` and an explicit fix suggestion.
-   * Extracted style props are destructured out of the generated React function parameters so they **never** forward onto the underlying HTML element (`variant` never leaks onto `<button>`).
+   * Extracted style props **plus** `style` and `dangerouslySetInnerHTML` **MUST** be stripped from both exported TypeScript component prop types (`Omit<..., 'style' | 'dangerouslySetInnerHTML'>`) and runtime `...props` spreads (`style: _style, dangerouslySetInnerHTML: _html, ...props`) across all 66 primitives so style props, inline `style` attributes, and raw HTML injection **never** forward onto the underlying DOM element.
+   * Every generated finite-union class lookup map **MUST** be emitted as a null-prototype object literal (`{ __proto__: null, ... }`) so prototype property names (`"__proto__"`, `"constructor"`, `"toString"`, `"valueOf"`) passed at runtime evaluate to `undefined` rather than leaking `Object.prototype` functions into `className`.
 2. **Auto-Minted `$ComponentProperty: ... !default` SCSS Variables**:
    * For every exported `const <ComponentName> = styled.<tag>...`, root-level box declarations (`padding` $\to$ `$<ComponentName>PaddingY` / `$<ComponentName>PaddingX`, `min-height` $\to$ `$<ComponentName>MinHeight`, `border-radius` $\to$ `$<ComponentName>Radius`, `gap` $\to$ `$<ComponentName>Gap`) are automatically hoisted as `!default` SCSS variables at the top of `dist/scss/components/_<kebab-name>.scss`.
 3. **Component Selector Interpolation & Extension**:
    * `& > ${Button} { ... }` resolves statically to `& > .vui-Button { ... }`.
    * `const CustomBtn = styled(Button)\`...\`` emits `.vui-CustomBtn` composed after `.vui-Button` with zero nested React Fiber wrappers.
 4. **File-Local JSX Fiber Inlining**:
-   * Any non-exported `const Inner = styled.<tag>\`...\`` referenced as `<Inner />` inside the same file compiles directly to `_jsx("<tag>", { className: "vui-Inner" })`—creating **zero** intermediate React component function calls.
+   * Any non-exported `const Inner = styled.<tag>\`...\`` referenced as `<Inner />` inside the same file compiles directly to `_jsx("<tag>", { className: "vui-Inner" })` -- creating **zero** intermediate React component function calls.
+5. **Confined SCSS `@use` / `@forward` Resolution & Bounded `$var` Expansion**:
+   * `scss-emitter.ts` and `css-builder.ts` **MUST** confine all SCSS `@use` and `@forward` module resolution strictly within canonical `base_dir` -- rejecting `..` parent traversal segments, absolute paths, URL schemes, and symlinks at every path segment (`lstat` / `O_NOFOLLOW` + canonicalized prefix verification) before Grass/Sass reads any partial.
+   * Compile-time SCSS `$var` expansion and mixin/AST evaluation **MUST** enforce explicit deterministic ceilings (maximum `$var` expansion depth and maximum expanded output byte budget), failing closed on cyclic or exponential `$var` definitions.
 
 ### 4.3 Required Compiler Outputs (Example: `Button`)
 * **JavaScript Output (`dist/esm/controls/Button.js`)**:
   ```js
   import { jsx as _jsx } from "react/jsx-runtime";
   const _variant = {
+    __proto__: null,
     primary: " vui-Button--variant-primary",
     secondary: "",
     quiet: " vui-Button--variant-quiet",
@@ -250,9 +257,12 @@ export const Button = styled.button.attrs({ type: 'button' })<ButtonStyleProps>`
     type = "button",
     disabled,
     className,
+    style: _style,
+    dangerouslySetInnerHTML: _html,
     ...props
   }) {
     return _jsx("button", {
+      ...props,
       type,
       disabled: disabled || loading,
       "aria-busy": loading || undefined,
@@ -262,7 +272,6 @@ export const Button = styled.button.attrs({ type: 'button' })<ButtonStyleProps>`
         (_variant[variant] || "") +
         (compact ? " vui-Button--compact" : "") +
         (className ? " " + className : ""),
-      ...props,
     });
   }
   ```
@@ -276,11 +285,11 @@ export const Button = styled.button.attrs({ type: 'button' })<ButtonStyleProps>`
 ```scss
 @layer vui.reset, vui.tokens, vui.grid, vui.components, vui.transitions, vui.utilities;
 ```
-* **0% Customization (None — Zero Config)**: Consumer imports `'vespoli-ui/styles.css'` and renders components directly. Zero bundler plugins, zero `<ThemeProvider>`.
-* **50% Customization (Half — Token or Variable Override)**:
+* **0% Customization (None -- Zero Config)**: Consumer imports `'vespoli-ui/styles.css'` and renders components directly. Zero bundler plugins, zero `<ThemeProvider>`.
+* **50% Customization (Half -- Token or Variable Override)**:
   * Plain CSS: `:root { --vui-color-accent: #38bdf8; }`
   * SCSS: `@use 'vespoli-ui/scss' with ($ButtonPaddingX: 10px, $color-accent: #38bdf8);`
-* **100% Customization (Full — Complete CSS Ownership)**:
+* **100% Customization (Full -- Complete CSS Ownership)**:
   * Any unlayered CSS/SCSS rule (`.vui-Button { padding: 0 10px; &.active { ... } }`) automatically overrides `@layer vui.components` with **zero `!important`** and without wrapping `<Button>` imports.
   * Consumers opting into `@vespoli/styled/vite` or `@vespoli/styled/esbuild` also gain `configure('Button', \`padding: 0 10px; &.active { ... }\`)` (global build-time override for every `<Button />` app-wide) and `styled(Button)\`...\`` (new composed primitive) at `0 B` runtime cost.
 
@@ -300,18 +309,18 @@ export const Button = styled.button.attrs({ type: 'button' })<ButtonStyleProps>`
 
 ---
 
-## 6. Conservation of UI Matter — Spatial, Origin-Bound & Async Transitions
+## 6. Conservation of UI Matter -- Spatial, Origin-Bound & Async Transitions
 
 ### 6.1 Non-Stretching Origin-to-Container Aperture Morphing
 1. **Passive Origin Tracker (`vespoli-ui/transitions`)**:
-   * A single capture-phase listener on `document` (`pointerdown` and `keydown` for `Enter`/`Space`) stores a `WeakRef<HTMLElement>` to `event.target.closest('button, a, summary, tr[data-row-key], [data-vui-interactive]')`.
+   * A single capture-phase listener per `Document` (`pointerdown` and `keydown` for `Enter`/`Space`) records a `WeakMap<Document, WeakRef<HTMLElement>>` entry for `event.target.closest('button, a, summary, tr[data-row-key], [data-vui-interactive]')`.
 2. **Immediate Container Mount + Compositor Shutter Illusion**:
    * When `<Dialog open={true}>` opens or `transitionTo(updateFn, options?)` executes:
      * If `prefers-reduced-motion: reduce` is active or `document.startViewTransition` is unavailable, `updateFn()` runs synchronously with zero motion.
-     * Otherwise:
+     * Otherwise (after clearing any prior in-flight `data-vui-morph` token so rapid overlapping activations never duplicate `view-transition-name`):
        1. Before snapshot `old`: the tracked origin element receives `data-vui-morph="active"` (`view-transition-name: vui-focal-morph` in `@layer vui.transitions`).
        2. Inside the `startViewTransition` callback (`t = 0ms`): `data-vui-morph` is removed from the origin element (which receives `data-vui-morph-hidden="true"` $\to$ `visibility: hidden` so toolbar/table layout does not shift `1px`), React immediately mounts the real destination container (`<Dialog>`, `<Card>`, `<Shell>`) at its final layout size, and stamps `data-vui-morph="active"` on that destination container (storing the origin `WeakRef` on the container instance for reverse collapse).
-       3. During the `220ms` `$EaseOutExpo` flight: `::view-transition-group(vui-focal-morph)` animates geometry and `border-radius` from the trigger's exact box to the container's final box, while `::view-transition-old(vui-focal-morph)` and `::view-transition-new(vui-focal-morph)` enforce:
+       3. During the `220ms` `$ease-out-expo` flight: `::view-transition-group(vui-focal-morph)` animates geometry and `border-radius` from the trigger's exact box to the container's final box, while `::view-transition-old(vui-focal-morph)` and `::view-transition-new(vui-focal-morph)` enforce:
           ```scss
           height: 100%;
           width: 100%;
@@ -330,7 +339,7 @@ export const Button = styled.button.attrs({ type: 'button' })<ButtonStyleProps>`
 ### 6.3 4-Way Directional Choreography & Discrete Entry/Exit CSS
 * `transitionTo(updateFn, { direction?: 'left' | 'right' | 'up' | 'down' | 'iris' })` passes `types: [direction]` to `document.startViewTransition({ update, types })`, driving `:active-view-transition-type(left | right | up | down | iris)` rules combining directional translation with subtle z-depth `scale(0.97)` recession and `clip-path: inset(...)` iris reveals.
 * Multi-page navigations opt in via `@view-transition { navigation: auto; }`.
-* Native `<dialog>` (`&[open]`, `&::backdrop`) and `<details>` (`::details-content`) animate both entry and exit from `display: none` / `overlay` using pure CSS `@starting-style` and `transition-behavior: allow-discrete`—zero JS unmount timers.
+* Native `<dialog>` (`&[open]`, `&::backdrop`) and `<details>` (`::details-content`) animate both entry and exit from `display: none` / `overlay` using pure CSS `@starting-style` and `transition-behavior: allow-discrete` -- zero JS unmount timers. Discrete `@starting-style { opacity: 0; }` entry rules are scoped under **`html:not(:active-view-transition)`** (and overridden by `[data-vui-morph="active"] { opacity: 1; transition: none; }`) so `document.startViewTransition()` captures the newly mounted `<Dialog>` at `opacity: 1` at `t = 0ms` rather than snapshotting a transparent box.
 
 ---
 
@@ -338,18 +347,25 @@ export const Button = styled.button.attrs({ type: 'button' })<ButtonStyleProps>`
 
 ### 7.1 `CanvasStage`, `RangeBar`, and `HeatmapCanvas`
 * Each visualization component renders a single `styled.canvas` element (`1 JSX tag = 1 <canvas>`), styled in `@layer vui.components` with surface fill, hairline border, and Frame-0 CSS `repeating-linear-gradient` gridlines so SSR/initial paint never flashes an empty void.
-* On mount, `CanvasStage` calls `canvas.transferControlToOffscreen()` and posts the `OffscreenCanvas` + computed theme token palette (`getComputedStyle` read once and updated on theme class change) to a dedicated Web Worker.
+* On mount, `canvas.tsx` checks a garbage-collected **`WeakMap<HTMLCanvasElement, WorkerChannel>`** before calling `canvas.transferControlToOffscreen()`, posting the `OffscreenCanvas` + computed theme token palette (`getComputedStyle` read once and updated on theme class change) to a dedicated Web Worker. Before invoking `new Worker(...)`, `<CanvasStage>` and `<HeatmapCanvas>` **MUST** validate `workerUrl` at runtime via `const u = new URL(workerUrl, location.href)` and require `(u.protocol === 'https:' || u.protocol === 'http:') && u.origin === location.origin` (rejecting cross-origin, `blob:`, `data:`, `javascript:`, and arbitrary caller-constructed `Worker` instances). React 19 `<StrictMode>` simulated double-effect re-runs reuse the live `OffscreenCanvas` channel without throwing `InvalidStateError`, while real unmounts (`!canvas.isConnected`) **MUST** terminate the worker (`worker.terminate()`) and release its buffers.
 * **Data Ingestion & Animation Protocol (Zero Main-Thread Load)**:
-  1. **Typed-Array Ring Buffer**: Worker maintains pre-allocated `Float32Array` / `Uint32Array` ring buffers—never JS object arrays in React state.
+  1. **Bounded Typed-Array Ring Buffer**: Worker maintains pre-allocated `Float32Array` / `Uint32Array` ring buffers -- never JS object arrays in React state. Both main-thread callers and Worker message boundaries **MUST** validate `Number.isFinite` on dimensions, offsets, and sample ranges, and enforce explicit upper-bound ceilings on buffer element counts and byte lengths (`length <= MAX_BUFFER_POINTS`, `byteLength <= MAX_BUFFER_BYTES`) before allocating or indexing typed arrays.
   2. **Live Stream Scroll-Blitting**: Appending live telemetry blits the existing GPU texture left (`ctx.drawImage(canvas, -dx, 0)`) and rasterizes only the newly arrived pixel columns (`< 0.05 ms`/frame).
-  3. **Pixel-Column Min/Max Decimation & `120ms` Filter Transitions**: Datasets of `100,000–1,000,000+` points are decimated in a single linear pass to `<= physicalWidthPx` min/max column pairs and interpolated (`lerp` in 2D `OffscreenCanvas` or `mix(prevY, nextY, t)` in WebGL2) over `120ms` at `< 1%` CPU with **zero** React `<Profiler>` commits.
-* **Accessibility Pairing**: Interactive range selection on `RangeBar` pairs the `<canvas>` (`aria-hidden="true"`) with dual semantic `<input type="range">` / ARIA slider handles and screen-reader summary attributes.
+  3. **Pixel-Column Min/Max Decimation & `120ms` Filter Transitions**: Datasets of `100,000-1,000,000+` points are decimated in a single linear pass to `<= physicalWidthPx` min/max column pairs and interpolated (`lerp` in 2D `OffscreenCanvas` or `mix(prevY, nextY, t)` in WebGL2) over `120ms` at `< 1%` CPU with **zero** React `<Profiler>` commits.
+* **Accessibility Pairing (`RangeField` + `RangeBar` + `Input`)**: `<RangeBar>` remains strictly `1 JSX tag = 1 <canvas aria-hidden="true">` (`buffer` prop only); interactive dual-thumb range brushing composes honestly via `<RangeField>` (`<div>` CSS Grid overlay track) without hidden wrapper `<div>`s or invisible `<canvas>`-child inputs:
+  ```tsx
+  <RangeField>
+    <RangeBar buffer={buf} />
+    <Input type="range" aria-label="Start" value={start} onChange={onStart} />
+    <Input type="range" aria-label="End" value={end} onChange={onEnd} />
+  </RangeField>
+  ```
 
 ---
 
 ## 8. Complete v1.0 Component Specification
 
-Every component forwards native HTML attributes and `ref` (React 19 `ref` prop) directly to its underlying element:
+Every component across all 66 primitives forwards safe native HTML attributes and `ref` (React 19 `ref` prop) directly to its underlying element while stripping `dangerouslySetInnerHTML` and `style` from both exported TypeScript prop types (`Omit<..., 'style' | 'dangerouslySetInnerHTML'>`) and runtime `...props` spreads (`style: _style, dangerouslySetInnerHTML: _html, ...props`). `<Crumb href>` and any link-rendering primitive **MUST** sanitize `href` at runtime by stripping all ASCII control and whitespace bytes (`0x00..0x20`, `0x7F`) before scheme parsing and allowing **ONLY** `https:`, `http:`, `mailto:`, or relative paths starting with `/` (excluding protocol-relative `//`), `#`, or `?` -- rejecting `javascript:`, `data:`, `vbscript:`, and all other schemes:
 
 | Component | Exact HTML Tag | Style / Behavior Props (Compiled & Stripped) | Notes & Performance Contract |
 | :--- | :--- | :--- | :--- |
@@ -362,21 +378,22 @@ Every component forwards native HTML attributes and `ref` (React 19 `ref` prop) 
 | `Stack` | `<div>` | `direction?: 'column' \| 'row'`, `gap?: 0..8`, `align?`, `justify?`, `wrap?: boolean` | 1D Flexbox strictly for use inside `Col`s |
 | `Toolbar` | `<div role="toolbar">` | `gap?: 1..4`, `justify?: 'start' \| 'between' \| 'end'` | 1D action/filter bar with roving focus support |
 | `Heading` | `<h1>`..`<h6>` (`level?: 1..6`) | `size?: 'xs' \| 'sm' \| 'md' \| 'lg' \| 'xl'` | Decouples semantic heading rank from visual scale |
-| `Breadcrumbs` / `Crumb` | `<nav>` / `<a>` or `<span>` | `current?: boolean` | Sets `aria-label="Breadcrumb"` and `aria-current="page"` |
+| `Breadcrumbs` / `Crumb` | `<nav>` / `<a>` or `<span>` | `current?: boolean`, sanitized `href?` | Sets `aria-label="Breadcrumb"` and `aria-current="page"`; strips ASCII control/whitespace bytes on `href` and allows **only** `https:`, `http:`, `mailto:`, or relative `/` (not `//`), `#`, `?` -- rejecting `javascript:`, `data:`, `vbscript:` (renders `<span>` when omitted/rejected) |
 | `Button` | `<button>` | `variant?: 'primary' \| 'secondary' \| 'quiet' \| 'danger'`, `compact?: boolean`, `loading?: boolean` | Defaults `type="button"`; shimmer border on `loading` |
 | `IconButton` | `<button>` | Same as `Button` + **required** `'aria-label': string` | Compile error (`VUI004`) if `'aria-label'` is omitted |
 | `Input` | `<input>` | `compact?: boolean`, `invalid?: boolean`, `mono?: boolean` | Sets `aria-invalid` when `invalid={true}` |
-| `Select` | `<select>` | `compact?: boolean`, `invalid?: boolean` | `appearance: none` + pure CSS chevron border |
+| `Select` | `<select>` | `compact?: boolean`, `invalid?: boolean` | `appearance: none` + dual `45deg` / `135deg` `linear-gradient(...)` CSS background chevron (`0` `<svg>`, `0` wrapper `<div>`, native replaced-element safe across Chromium, WebKit, and Gecko) |
 | `Checkbox` | `<input type="checkbox">` | `invalid?: boolean` | `appearance: none` + `&::after` CSS checkmark transition |
 | `Label` | `<label>` | `muted?: boolean` | Explicit `htmlFor` composition |
 | `Field` / `FieldHint` / `FieldError` | `<div>` / `<p>` / `<p role="alert">` | `gap?: 1..3` | Pure composition wrapper for form controls |
+| `RangeField` | `<div>` | `compact?: boolean` | CSS Grid overlay track composing `<RangeBar>` + dual `<Input type="range">` handles |
 | `Segments` / `Segment` | `<div role="radiogroup">` / `<button role="radio">` | `active?: boolean`, `compact?: boolean` | Stateless exclusive toggle group |
 | `Tabs` / `Tab` / `TabPanel` | `<div role="tablist">` / `<button role="tab">` / `<section role="tabpanel">` | `active?: boolean` | Pairs with `vespoli-ui/a11y` roving-tabindex helpers |
 | `Pagination` | `<nav>` | `hasPrev: boolean`, `hasNext: boolean`, `onPrev`, `onNext`, `summary?: string` | Cursor/page stateless navigation controls |
 | `FacetBar` / `FacetGroup` / `FacetList` | `<aside>` or `<div>` / `<fieldset>` / `<ul role="listbox">` | `selectedKeys`, `excludedKeys`, `onToggleKey` | Delegated event handling + live facet count badges |
 | `ChipBar` / `Chip` | `<div role="region">` / `<button>` | `operator?: 'in' \| 'not'`, `onRemove` | Active filter predicate chips |
 | `Table` / `TableHead` / `TableBody` / `TableRow` / `HeaderCell` / `TableCell` | `<table>` / `<thead>` / `<tbody>` / `<tr>` / `<th>` / `<td>` | `align?: 'left' \| 'center' \| 'right'`, `width?: 'xs' \| 'sm' \| 'md' \| 'lg' \| 'auto'`, `selected?: boolean`, `onRowActivate` | Single delegated listener on `<tbody>`; `React.memo` row isolation; `tabular-nums` on right-aligned cells |
-| `VirtualTable` | `<table>` | `totalRows: number`, `offsetPx: number`, `afterPx: number` | Stateless spacer-row windowing (`data-spacer` quantized heights or CSS custom scroll window) at `60 fps` for `100k+` rows |
+| `VirtualTable` / `VirtualSpacer` | `<table>` / `<tr aria-hidden="true">` | `bit: 0..17` (18 static power-of-two spacer classes `data-bit="0..17"`, heights `$RowHeight * 2^0` .. `$RowHeight * 2^17`) | Decomposes any integer row offset `0..262,143` (`~9.4M px` at `36px`/row) into `<= 18` binary `<VirtualSpacer bit={b} />` rows for `1`-row-exact windowing on `100k+` rows at `60 fps` in `< 600 B` of static CSS (`0` inline `style`, `0` `VUI001` dynamic interpolations) |
 | `TreeTable` / `TreeRow` | `<table role="treegrid">` / `<tr role="row">` | `level: 1..8`, `expanded?: boolean` | Hierarchical manifest/file browser (`aria-level`, `aria-expanded`) |
 | `DagRail` / `DagLane` | `<div>` / `<span>` | `edge: 'straight' \| 'fork-right' \| 'merge-left' \| 'ghost'`, `node?: 'commit' \| 'merge' \| 'head' \| 'ghost'` | Zero-SVG pure CSS box/arc commit & force-push lineage cell |
 | `Properties` / `PropertyItem` | `<dl>` / `<div>` | `mono?: boolean` | Compact key-value metadata definition list |
@@ -387,7 +404,7 @@ Every component forwards native HTML attributes and `ref` (React 19 `ref` prop) 
 | `Metrics` / `MetricItem` | `<section>` / `<article>` | `trend?: 'up' \| 'down' \| 'flat'` | High-density KPI strip |
 | `Icon` | `<span aria-hidden="true">` | `name: GlyphName`, `size?: 'sm' \| 'md' \| 'lg'` | Pure CSS geometric primitive or `< 2 KB` WOFF2 glyph |
 | `Dialog` / `Inspector` | `<dialog>` | `open: boolean`, `onClose: () => void`, `loading?: boolean`, `drawer?: 'right' \| 'bottom'` | Origin-aperture morph open/close + native `::backdrop` |
-| `CanvasStage` / `RangeBar` / `HeatmapCanvas` | `<canvas>` | `buffer`, `onBrushChange` | `OffscreenCanvas` ring-buffer `100k+` point renderers |
+| `CanvasStage` / `RangeBar` / `HeatmapCanvas` | `<canvas>` | `buffer`, `workerUrl?` (`RangeBar`: `buffer` only) | `WeakMap`-idempotent `OffscreenCanvas` ring-buffer `100k+` point renderers (`1 JSX tag = 1 <canvas>`); enforces runtime `(u.protocol === 'https:' \|\| u.protocol === 'http:') && new URL(workerUrl, location.href).origin === location.origin` before `new Worker(...)`, `worker.terminate()` on unmount, and `Number.isFinite` + upper-bound buffer size checks |
 
 ---
 
@@ -400,14 +417,14 @@ Every component forwards native HTML attributes and `ref` (React 19 `ref` prop) 
    * Flat barrel: `import { Container, Row, Col, Button, Table, Dialog, transitionTo } from 'vespoli-ui';` (`"sideEffects": ["*.css", "*.scss"]` so JS tree-shakes cleanly).
    * 1:1 PascalCase subpaths: `import { Button } from 'vespoli-ui/Button';`
    * Stylesheets: `'vespoli-ui/styles.css'`, `'vespoli-ui/css/*'`, `'vespoli-ui/scss'`, `'vespoli-ui/scss/components/*'`.
-   * Agent manifest: `'vespoli-ui/AGENT.md'` and `'vespoli-ui/manifest.json'`.
-4. **Actionable Compiler & Type Diagnostics (`VUI001`–`VUI010`)**:
+   * Reference & manifest: `'vespoli-ui/REFERENCE.md'` and `'vespoli-ui/manifest.json'` (nested `AGENT*.md` filenames are prohibited so only root depth-0 `<repo_root>/AGENTS.md` uses an `AGENT*.md` filename).
+4. **Actionable Compiler & Type Diagnostics (`VUI001`-`VUI010`)**:
    * `VUI001`: Unbounded dynamic interpolation in `styled` template $\to$ convert prop to finite union/boolean.
    * `VUI002`: Disallowed stateful hook or Context import in `packages/ui/src`.
-   * `VUI003`: Disallowed inline `style` prop or `<svg>` element detected.
+   * `VUI003`: Disallowed `style` prop, `dangerouslySetInnerHTML` prop, or `<svg>` element detected.
    * `VUI004`: Missing required `'aria-label'` on `<IconButton>` or unassociated form control.
-5. **Shipped `< 3 KB` `AGENT.md` & `dist/manifest.json`**:
-   * Generated automatically from TypeScript AST + SCSS emitter output during `npm run build` so documentation can **never** drift from code. Lists every component, its exact HTML tag, its stripped style props, and its `$ComponentProperty` SCSS variables in `< 800` tokens.
+5. **Shipped `< 3 KB` `packages/ui/REFERENCE.md` & `dist/manifest.json`**:
+   * Generated automatically from TypeScript AST + SCSS emitter output during `npm run build` into `packages/ui/REFERENCE.md` (so exclusively root depth-0 `<repo_root>/AGENTS.md` uses an `AGENT*.md` filename) and `dist/manifest.json` so documentation can **never** drift from code. Lists every component, its exact HTML tag, its stripped style props, and its `$ComponentProperty` SCSS variables in `< 800` tokens.
 
 ---
 
@@ -416,15 +433,17 @@ Every component forwards native HTML attributes and `ref` (React 19 `ref` prop) 
 Every pull request and `main` build **MUST** pass all automated gates before publish/merge:
 
 1. **Static Package & Security Gate (`scripts/check-package.ts`)**:
-   * `style_runtime_bytes == 0` across `dist/esm/**`.
-   * `inline_style_attr_count == 0` across `packages/ui/src/**` and `dist/esm/**`.
-   * `svg_count == 0` (zero `<svg`, `<path`, `.svg`, or `image/svg+xml` tokens across `packages/**`, `bench/**`, `scripts/**`, and `dist/**`).
-   * `stateful_hook_count == 0` (`useState`, `useReducer`, `useContext`, `createContext` absent from `packages/ui/src/**`).
-2. **Standalone SCSS Determinism Gate (`scripts/check-scss.ts`)**:
-   * Compiles `dist/scss/index.scss` (both default and with `@use ... with (...)` variable overrides) and every `dist/scss/components/_*.scss` partial individually via Grass.
+   * `style_runtime_bytes == 0` across `dist/esm/**`, with `__proto__: null` enforced on every generated union class lookup map.
+   * `inline_style_attr_count == 0` and `dangerously_set_inner_html_count == 0` across `packages/ui/src/**`, exported `.d.ts` prop types, and `dist/esm/**` (verifying `style` and `dangerouslySetInnerHTML` are stripped across all 66 primitives).
+   * `svg_count == 0` (zero `<svg`, `<path`, `.svg`, or `image/svg+xml` tokens across `packages/**`, `bench/**`, `scripts/**`, and `dist/**`), and zero nested `AGENT*.md` files outside root `<repo_root>/AGENTS.md` (`packages/ui/REFERENCE.md` verified).
+   * `stateful_hook_count == 0` (`useState`, `useReducer`, `useContext`, `createContext` absent from `packages/ui/src/**`; `WeakMap` DOM handoff/origin maps in `canvas.tsx` and `transitions.ts` are the sole allowed module-level bindings), plus runtime unit vectors verifying `<Crumb href>` scheme sanitization (rejecting control/whitespace-padded `javascript:`, `data:`, `vbscript:`), `<CanvasStage>`/`<HeatmapCanvas>` same-origin `http:`/`https:` `workerUrl` validation + unmount `worker.terminate()` + `Number.isFinite`/upper-bound buffer checks.
+2. **Standalone SCSS Confinement & Determinism Gate (`scripts/check-scss.ts`)**:
+   * Compiles `dist/scss/index.scss` (both default and with `@use ... with (...)` variable overrides) and every `dist/scss/components/_*.scss` partial individually via Grass while enforcing `base_dir` confinement on `@use`/`@forward` (rejecting `..`, absolute paths, and symlinks) and bounded `$var` expansion limits.
    * Verifies byte-for-byte deterministic compilation across runs.
 3. **Playwright + Lighthouse + React `<Profiler>` Benchmark Gate (`bench/budgets.json`)**:
    * **Bundle Budgets**: Core `styles.css` gzipped `<= 6.0 KB`; `vui-glyphs.woff2` `<= 2.0 KB`; single `Button` tree-shaken JS gzipped `<= 0.6 KB`.
    * **Render & Re-Render Budgets**: Primitive mount `p95 <= 1.5 ms`; `500`-row `Table` single-row selection change re-renders **at most 2 rows** (`rerender_unchanged_row_count == 0`); `100,000`-point `CanvasStage` `120ms` transition triggers **`0` React commits** and maintains `>= 60 fps`.
    * **Strict CSP Gate**: Playwright runs all component and transition suites under the locked `style-src 'self'; script-src 'self'` header with `0` `securitypolicyviolation` events.
    * **Accessibility Gate**: Lighthouse `accessibility == 100`, `axe-core` `0` violations in dark, light, and `@media (forced-colors: active)` modes, `200%` zoom reflow pass, and reduced-motion verification.
+4. **Provenance & Supply-Chain Gate**:
+   * Enforces `pnpm install --frozen-lockfile --ignore-scripts`, `pnpm audit --prod`, reproducible tarball digest verification, and keyless GitHub Actions OIDC **`npm publish --provenance`** (`0` static `NPM_TOKEN` secrets).
