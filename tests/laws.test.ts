@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import zlib from "node:zlib";
 import {
   TOKEN_LIST,
   configure,
@@ -320,6 +321,108 @@ describe("Law 4 & Law 5 -- Strict CSP (Zero Inline style) & Hard Zero-SVG + Offs
       0.8
     );
     assert.deepEqual(ops, ["draw:-2", "clear", "fill"]);
+  });
+
+  it("emits Browser-OTS-compliant < 2 KB WOFF2 with 0xCA/0xCB glyf/loca and 8 distinct TrueType UI glyphs", () => {
+    const woff2Path = path.join(REPO_ROOT, "dist", "fonts", "vui-glyphs.woff2");
+    const woff2 = fs.readFileSync(woff2Path);
+    assert.equal(woff2.subarray(0, 4).toString("ascii"), "wOF2");
+    assert.equal(woff2.readUInt32BE(4), 0x00010000);
+    assert.equal(woff2.readUInt32BE(8), woff2.length);
+    assert.ok(woff2.length < 2048, `Expected WOFF2 < 2048 B, got ${woff2.length} B`);
+
+    const numTables = woff2.readUInt16BE(12);
+    assert.equal(numTables, 10);
+    const compressedLen = woff2.readUInt32BE(20);
+
+    const expectedDir: ReadonlyArray<readonly [string, number]> = [
+      ["OS/2", 0x06],
+      ["cmap", 0x00],
+      ["glyf", 0xca],
+      ["head", 0x01],
+      ["hhea", 0x02],
+      ["hmtx", 0x03],
+      ["loca", 0xcb],
+      ["maxp", 0x04],
+      ["name", 0x05],
+      ["post", 0x07]
+    ];
+
+    let pos = 48;
+    const lengths: number[] = [];
+    for (let i = 0; i < numTables; i += 1) {
+      const flags = woff2[pos]!;
+      pos += 1;
+      assert.equal(flags, expectedDir[i]![1], `WOFF2 flags mismatch for ${expectedDir[i]![0]}`);
+      let origLen = 0;
+      for (let k = 0; k < 5; k += 1) {
+        const b = woff2[pos]!;
+        pos += 1;
+        origLen = (origLen << 7) | (b & 0x7f);
+        if ((b & 0x80) === 0) break;
+      }
+      lengths.push(origLen);
+    }
+
+    assert.equal(pos + compressedLen, woff2.length);
+    const decompressed = zlib.brotliDecompressSync(woff2.subarray(pos));
+    assert.equal(
+      decompressed.length,
+      lengths.reduce((a, b) => a + b, 0)
+    );
+
+    const tableMap = new Map<string, Buffer>();
+    let rawOff = 0;
+    for (let i = 0; i < numTables; i += 1) {
+      const len = lengths[i]!;
+      tableMap.set(expectedDir[i]![0], decompressed.subarray(rawOff, rawOff + len));
+      rawOff += len;
+    }
+
+    const head = tableMap.get("head")!;
+    const maxp = tableMap.get("maxp")!;
+    const hhea = tableMap.get("hhea")!;
+    const loca = tableMap.get("loca")!;
+    const glyf = tableMap.get("glyf")!;
+
+    assert.equal(head.length, 54);
+    assert.equal(head.readUInt32BE(12), 0x5f0f3cf5);
+    assert.equal(head.readInt16BE(50), 0, "short loca format expected");
+    assert.equal(maxp.length, 32);
+    assert.equal(maxp.readUInt32BE(0), 0x00010000, "TrueType maxp v1.0 required");
+    const numGlyphs = maxp.readUInt16BE(4);
+    assert.equal(numGlyphs, 9);
+    assert.equal(hhea.readUInt16BE(34), 9);
+
+    assert.equal(loca.length, (numGlyphs + 1) * 2);
+    const offsets: number[] = [];
+    for (let g = 0; g <= numGlyphs; g += 1) {
+      offsets.push(loca.readUInt16BE(g * 2) * 2);
+    }
+    assert.equal(offsets[0], 0);
+    assert.equal(offsets[numGlyphs], glyf.length);
+    for (let g = 0; g < numGlyphs; g += 1) {
+      assert.ok(offsets[g]! < offsets[g + 1]!);
+      assert.equal(offsets[g]! % 4, 0);
+    }
+
+    const glyphSignatures = new Set<string>();
+    for (let gid = 1; gid <= 8; gid += 1) {
+      const slice = glyf.subarray(offsets[gid]!, offsets[gid + 1]!);
+      const contourCount = slice.readInt16BE(0);
+      assert.ok(contourCount >= 1);
+      const bbox = [
+        slice.readInt16BE(2),
+        slice.readInt16BE(4),
+        slice.readInt16BE(6),
+        slice.readInt16BE(8)
+      ].join(",");
+      const lastEndPt = slice.readUInt16BE(10 + (contourCount - 1) * 2);
+      const sig = `${contourCount}:${lastEndPt + 1}:${bbox}:${slice.toString("hex")}`;
+      assert.equal(glyphSignatures.has(sig), false, `Duplicate glyph geometry at gid=${gid}`);
+      glyphSignatures.add(sig);
+    }
+    assert.equal(glyphSignatures.size, 8);
   });
 });
 

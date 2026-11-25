@@ -56,8 +56,8 @@ $color-accent: #5eead4 !default;
         assert_eq!(bytes_a, bytes_b, "WOFF2 output must be deterministic");
         assert_eq!(&bytes_a[0..4], b"wOF2");
         assert!(
-            bytes_a.len() <= 2048,
-            "vui-glyphs.woff2 must stay <= 2048 bytes, got {}",
+            bytes_a.len() < 2048,
+            "vui-glyphs.woff2 must stay < 2048 bytes, got {}",
             bytes_a.len()
         );
     }
