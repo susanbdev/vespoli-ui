@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import zlib from "node:zlib";
 import { auditSourceLaws } from "../packages/styled-compiler/src/index.ts";
 import { buildAll } from "./build.ts";
 
@@ -288,10 +289,33 @@ export function verifyPackageGate(): void {
 
   const fontPath = path.join(REPO_ROOT, "dist", "fonts", "vui-glyphs.woff2");
   const fontBuf = fs.readFileSync(fontPath);
-  if (fontBuf.subarray(0, 4).toString("ascii") !== "wOF2" || fontBuf.length > 2048) {
+  if (
+    fontBuf.length < 48 ||
+    fontBuf.subarray(0, 4).toString("ascii") !== "wOF2" ||
+    fontBuf.length >= 2048
+  ) {
     failures.push(
       `Invalid or oversized vui-glyphs.woff2 (len=${fontBuf.length})`
     );
+  } else {
+    const numTables = fontBuf.readUInt16BE(12);
+    const compressedLen = fontBuf.readUInt32BE(20);
+    if (numTables !== 10 || compressedLen === 0 || compressedLen >= fontBuf.length) {
+      failures.push(
+        `Invalid WOFF2 header in vui-glyphs.woff2 (numTables=${numTables}, compressedLen=${compressedLen})`
+      );
+    } else {
+      try {
+        const rawSfntStream = zlib.brotliDecompressSync(
+          fontBuf.subarray(fontBuf.length - compressedLen)
+        );
+        if (rawSfntStream.length === 0) {
+          failures.push("Empty Brotli SFNT payload in vui-glyphs.woff2");
+        }
+      } catch (err) {
+        failures.push(`WOFF2 Brotli decompression failed: ${String(err)}`);
+      }
+    }
   }
 
   if (
