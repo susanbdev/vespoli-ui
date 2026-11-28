@@ -21,7 +21,7 @@
    - Components, types, crates, and modules are Domain Nouns (`1-2` words default, `3` words hard ceiling). Standalone functions and methods start with action Verbs (`transitionTo`, `trackOrigin`, `moveFocus`, `compile_scss`).
    - `*Manager`, `*Helper`, `*Util`, `*DO`, `*Wrapper`, `*Root`, `*Contract`, `*Check`, compound `*Container`, `slots`/`slotClasses`, and `utils`/`helpers`/`common`/`misc` directories are forbidden.
 3. **Law 3 -- Static `styled` Extraction (`0 B` Runtime Overhead)**:
-   - `@vespoli/styled-compiler` (`#![forbid(unsafe_code)]` Rust engine + TypeScript AST pipeline) statically erases all `styled` and `css` tagged templates into modular `.scss` partials (`!default` variables + `@layer` cascade), minified `.css` bundles, and zero-dependency ESM JavaScript.
+   - `crates/compiler` (`#![forbid(unsafe_code)]` Rust compiler engine) and `@vespoli/styled-compiler` in `packages/styled-compiler` (TypeScript AST extraction pipeline) statically erase all `styled` and `css` tagged templates into modular `.scss` partials (`!default` variables + `@layer` cascade), minified `.css` bundles, and zero-dependency ESM JavaScript.
 4. **Law 4 -- Zero Inline Styles (Strict `style-src 'self'` CSP)**:
    - JSX `style={{ ... }}` and DOM `style="..."` attributes are prohibited across all components.
 5. **Law 5 -- Hard Zero-SVG Mandate & `OffscreenCanvas` Visualization**:
@@ -34,4 +34,4 @@
 
 ## 3. Verification Gate
 
-Every change MUST pass `./scripts/check` (`make check`), enforcing pure 7-bit ASCII hygiene across all tracked files, Org Naming Law, `CARGO_BUILD_JOBS=1 cargo fmt --check`, `CARGO_BUILD_JOBS=1 cargo clippy --workspace --all-targets -- -D warnings`, `CARGO_BUILD_JOBS=1 cargo test --workspace --offline`, `scripts/check-package.ts`, `scripts/check-scss.ts`, and `bench/run-bench.ts`.
+Every change MUST pass `./scripts/check` (`make check`), enforcing pure 7-bit ASCII hygiene across all tracked files, Org Naming Law, `CARGO_BUILD_JOBS=1 cargo fmt --check`, `CARGO_BUILD_JOBS=1 cargo clippy --workspace --all-targets -- -D warnings`, `CARGO_BUILD_JOBS=1 cargo test --workspace --offline`, `scripts/check-package.ts`, `scripts/check-scss.ts`, `npm test` (`tests/*.test.ts`), and `bench/run-bench.ts`.

@@ -13,7 +13,7 @@
     "check:package": "node --experimental-strip-types scripts/check-package.ts",
     "check:scss": "node --experimental-strip-types scripts/check-scss.ts",
     "bench": "node --experimental-strip-types bench/run-bench.ts",
-    "test": "node --experimental-strip-types --import ./bench/register-react.ts --test tests/*.test.ts",
+    "test": "node --experimental-strip-types scripts/build.ts && node --experimental-strip-types --import ./bench/register-react.ts --test tests/*.test.ts",
     "check": "./scripts/check"
   },
   "engines": {

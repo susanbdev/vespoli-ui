@@ -13,6 +13,7 @@ export const REACT_FRAGMENT = Symbol.for("react.fragment");
 export const REACT_MEMO = Symbol.for("react.memo");
 export const REACT_PROFILER = Symbol.for("react.profiler");
 export const REACT_STRICT_MODE = Symbol.for("react.strict_mode");
+const REACT_TEXT = Symbol.for("react.text");
 
 export interface MemoType {
   readonly $$typeof: symbol;
@@ -32,9 +33,11 @@ interface EffectEntry {
 interface FiberInstance {
   vnode: VNode;
   dom: SimElement | null;
+  text?: string;
   children: FiberInstance[];
   effects: EffectEntry[];
   memoizedProps?: Record<string, unknown>;
+  memoizedSelectValues?: ReadonlySet<string> | null;
 }
 
 let activeFiber: FiberInstance | null = null;
@@ -204,6 +207,8 @@ export class SimElement {
   public readonly tagName: string;
   public readonly ownerDocument: SimDocument;
   public readonly attributes = new Map<string, string>();
+  public readonly booleanAttributes = new Set<string>();
+  public readonly managedAttributes = new Set<string>();
   public readonly listeners = new Map<string, (ev: Record<string, unknown>) => void>();
   public children: Array<SimElement | string> = [];
   public parentElement: SimElement | null = null;
@@ -229,8 +234,10 @@ export class SimElement {
       });
     }
     this.attributes.set(name, val);
+    this.booleanAttributes.delete(name);
     if (name === "open") this.open = true;
     if (name === "disabled") this.disabled = true;
+    if (name === "tabindex") this.tabIndex = Number(val);
   }
 
   getAttribute(name: string): string | null {
@@ -239,8 +246,10 @@ export class SimElement {
 
   removeAttribute(name: string): void {
     this.attributes.delete(name);
+    this.booleanAttributes.delete(name);
     if (name === "open") this.open = false;
     if (name === "disabled") this.disabled = false;
+    if (name === "tabindex") this.tabIndex = 0;
   }
 
   appendChild(child: SimElement | string): void {
@@ -258,12 +267,14 @@ export class SimElement {
   showModal(): void {
     this.open = true;
     this.attributes.set("open", "");
+    this.booleanAttributes.add("open");
     this.modalShowCount += 1;
   }
 
   close(): void {
     this.open = false;
     this.attributes.delete("open");
+    this.booleanAttributes.delete("open");
     this.modalCloseCount += 1;
   }
 
@@ -359,14 +370,10 @@ export function createTestRoot(options: { strictMode?: boolean } = {}): TestRoot
     memoRowRenders: 0,
     render(vnode: VNode): SimElement | null {
       const pendingEffects: FiberInstance[] = [];
-      rootFiber = reconcileFiber(rootFiber, vnode, doc, root, pendingEffects);
+      rootFiber = reconcileFiber(rootFiber, vnode, doc, root, pendingEffects, null);
       container.children = [];
-      if (rootFiber?.dom) {
-        container.appendChild(rootFiber.dom);
-      } else if (rootFiber) {
-        for (const ch of rootFiber.children) {
-          if (ch.dom) container.appendChild(ch.dom);
-        }
+      if (rootFiber) {
+        appendFiberNodes(rootFiber, container);
       }
 
       runPendingEffects(pendingEffects);
@@ -387,15 +394,8 @@ export function createTestRoot(options: { strictMode?: boolean } = {}): TestRoot
     },
     unmount(): void {
       if (rootFiber) {
-        const all = collectFibers(rootFiber);
-        for (const f of all) {
-          if (f.dom) {
-            f.dom.isConnected = false;
-            f.dom.parentElement = null;
-          }
-        }
+        unmountFiberSubtree(rootFiber);
         container.children = [];
-        cleanupEffects(all);
         rootFiber = null;
       }
     }
@@ -417,14 +417,81 @@ function shallowEqualProps(
   return true;
 }
 
+function unmountFiberSubtree(fiber: FiberInstance): void {
+  const stale = collectFibers(fiber);
+  for (const f of stale) {
+    if (f.dom) {
+      f.dom.isConnected = false;
+      f.dom.parentElement = null;
+      const ref = f.vnode.props.ref;
+      if (typeof ref === "function") {
+        (ref as (el: SimElement | null) => void)(null);
+      } else if (ref && typeof ref === "object") {
+        (ref as { current: SimElement | null }).current = null;
+      }
+    }
+  }
+  cleanupEffects(stale);
+}
+
+function appendFiberNodes(fiber: FiberInstance, parentDom: SimElement): void {
+  if (fiber.text !== undefined) {
+    if (fiber.text !== "") parentDom.appendChild(fiber.text);
+    return;
+  }
+  if (fiber.dom) {
+    parentDom.appendChild(fiber.dom);
+    return;
+  }
+  for (const ch of fiber.children) {
+    appendFiberNodes(ch, parentDom);
+  }
+}
+
+function equalSelectSets(
+  a: ReadonlySet<string> | null | undefined,
+  b: ReadonlySet<string> | null
+): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.size !== b.size) return false;
+  for (const item of a) {
+    if (!b.has(item)) return false;
+  }
+  return true;
+}
+
+function assignHostRef(ref: unknown, node: SimElement | null): void {
+  if (typeof ref === "function") {
+    (ref as (el: SimElement | null) => void)(node);
+  } else if (ref && typeof ref === "object") {
+    (ref as { current: SimElement | null }).current = node;
+  }
+}
+
 function reconcileFiber(
-  prev: FiberInstance | null,
+  prevInput: FiberInstance | null,
   vnode: VNode,
   doc: SimDocument,
   root: TestRoot,
-  effectQueue: FiberInstance[]
+  effectQueue: FiberInstance[],
+  selectValues: ReadonlySet<string> | null = null
 ): FiberInstance {
   const type = vnode.type;
+  let prev = prevInput;
+  if (prev && prev.vnode.type !== type) {
+    unmountFiberSubtree(prev);
+    prev = null;
+  }
+
+  if (type === REACT_TEXT) {
+    const text = String(vnode.props.nodeValue ?? "");
+    if (prev) {
+      prev.vnode = vnode;
+      prev.text = text;
+      return prev;
+    }
+    return { vnode, dom: null, text, children: [], effects: [] };
+  }
 
   if (type === REACT_FRAGMENT || type === REACT_STRICT_MODE || type === REACT_PROFILER) {
     if (type === REACT_PROFILER) {
@@ -440,12 +507,14 @@ function reconcileFiber(
       effects: []
     };
     fiber.vnode = vnode;
+    fiber.dom = null;
     fiber.children = reconcileChildList(
       fiber.children,
       childList,
       doc,
       root,
-      effectQueue
+      effectQueue,
+      selectValues
     );
     return fiber;
   }
@@ -456,7 +525,11 @@ function reconcileFiber(
     (type as MemoType).$$typeof === REACT_MEMO
   ) {
     const memoDef = type as MemoType;
-    if (prev && prev.vnode.type === type && prev.memoizedProps) {
+    if (
+      prev &&
+      prev.memoizedProps &&
+      equalSelectSets(prev.memoizedSelectValues ?? null, selectValues)
+    ) {
       const isEqual = memoDef.compare
         ? memoDef.compare(prev.memoizedProps, vnode.props)
         : shallowEqualProps(prev.memoizedProps, vnode.props);
@@ -472,20 +545,29 @@ function reconcileFiber(
       effects: []
     };
     fiber.vnode = vnode;
+    fiber.dom = null;
     fiber.memoizedProps = vnode.props;
+    fiber.memoizedSelectValues = selectValues;
+    const prevActive = activeFiber;
+    const prevCursor = effectCursor;
     activeFiber = fiber;
     effectCursor = 0;
-    const rendered = memoDef.type(vnode.props);
-    activeFiber = null;
+    let rendered: unknown;
+    try {
+      rendered = memoDef.type(vnode.props);
+    } finally {
+      activeFiber = prevActive;
+      effectCursor = prevCursor;
+    }
     const childNodes = flattenChildren(rendered);
     fiber.children = reconcileChildList(
       fiber.children,
       childNodes,
       doc,
       root,
-      effectQueue
+      effectQueue,
+      selectValues
     );
-    fiber.dom = fiber.children[0]?.dom ?? null;
     if (fiber.effects.length > 0) effectQueue.push(fiber);
     return fiber;
   }
@@ -499,29 +581,46 @@ function reconcileFiber(
       effects: []
     };
     fiber.vnode = vnode;
+    fiber.dom = null;
+    const prevActive = activeFiber;
+    const prevCursor = effectCursor;
     activeFiber = fiber;
     effectCursor = 0;
-    const rendered = fn(vnode.props);
-    activeFiber = null;
+    let rendered: unknown;
+    try {
+      rendered = fn(vnode.props);
+    } finally {
+      activeFiber = prevActive;
+      effectCursor = prevCursor;
+    }
     const childNodes = flattenChildren(rendered);
     fiber.children = reconcileChildList(
       fiber.children,
       childNodes,
       doc,
       root,
-      effectQueue
+      effectQueue,
+      selectValues
     );
-    fiber.dom = fiber.children[0]?.dom ?? null;
     if (fiber.effects.length > 0) effectQueue.push(fiber);
     return fiber;
   }
 
   if (typeof type === "string") {
+    const tagLower = type.toLowerCase();
     const dom =
-      prev && prev.dom && prev.dom.tagName.toLowerCase() === type.toLowerCase()
+      prev && prev.dom && prev.dom.tagName.toLowerCase() === tagLower
         ? prev.dom
         : doc.createElement(type);
-    applyDomProps(dom, vnode.props);
+    const prevRef = prev ? prev.vnode.props.ref : undefined;
+    const effectiveProps =
+      tagLower === "option" && selectValues && vnode.props.selected === undefined
+        ? {
+            ...vnode.props,
+            selected: selectValues.has(readOptionValue(vnode.props))
+          }
+        : vnode.props;
+    applyDomProps(dom, effectiveProps);
     const fiber: FiberInstance = prev ?? {
       vnode,
       dom,
@@ -531,44 +630,32 @@ function reconcileFiber(
     fiber.vnode = vnode;
     fiber.dom = dom;
 
-    const rawKids = Array.isArray(vnode.props.children)
-      ? vnode.props.children
-      : vnode.props.children !== undefined
-        ? [vnode.props.children]
-        : [];
+    const nextSelect =
+      tagLower === "select"
+        ? resolveSelectedSet(effectiveProps.value ?? effectiveProps.defaultValue)
+        : selectValues;
+    const childList =
+      tagLower === "textarea" &&
+      (effectiveProps.value !== undefined || effectiveProps.defaultValue !== undefined)
+        ? flattenChildren(String(effectiveProps.value ?? effectiveProps.defaultValue ?? ""))
+        : flattenChildren(effectiveProps.children);
+    fiber.children = reconcileChildList(
+      fiber.children,
+      childList,
+      doc,
+      root,
+      effectQueue,
+      nextSelect
+    );
     dom.children = [];
-    const nextChildFibers: FiberInstance[] = [];
-    let fiberIdx = 0;
-    for (const item of rawKids) {
-      if (item === null || item === undefined || typeof item === "boolean") {
-        continue;
-      }
-      if (typeof item === "string" || typeof item === "number") {
-        dom.appendChild(String(item));
-      } else if (isVNode(item)) {
-        const sub = reconcileFiber(
-          fiber.children[fiberIdx] ?? null,
-          item,
-          doc,
-          root,
-          effectQueue
-        );
-        fiberIdx += 1;
-        nextChildFibers.push(sub);
-        if (sub.dom) {
-          dom.appendChild(sub.dom);
-        } else {
-          for (const grand of sub.children) {
-            if (grand.dom) dom.appendChild(grand.dom);
-          }
-        }
-      }
+    for (const ch of fiber.children) {
+      appendFiberNodes(ch, dom);
     }
-    fiber.children = nextChildFibers;
-    if (typeof vnode.props.ref === "function") {
-      (vnode.props.ref as (el: SimElement | null) => void)(dom);
-    } else if (vnode.props.ref && typeof vnode.props.ref === "object") {
-      (vnode.props.ref as { current: SimElement | null }).current = dom;
+    if (!prev || prevRef !== effectiveProps.ref) {
+      if (prev && prevRef !== undefined) {
+        assignHostRef(prevRef, null);
+      }
+      assignHostRef(effectiveProps.ref, dom);
     }
     return fiber;
   }
@@ -581,64 +668,196 @@ function reconcileChildList(
   nextVNodes: VNode[],
   doc: SimDocument,
   root: TestRoot,
-  effectQueue: FiberInstance[]
+  effectQueue: FiberInstance[],
+  selectValues: ReadonlySet<string> | null
 ): FiberInstance[] {
   const prevByKey = new Map<string, FiberInstance>();
   for (let i = 0; i < prevChildren.length; i += 1) {
     const pf = prevChildren[i]!;
     const k = pf.vnode.key ?? `__idx_${i}`;
-    prevByKey.set(k, pf);
+    if (!prevByKey.has(k)) {
+      prevByKey.set(k, pf);
+    }
   }
-  return nextVNodes.map((vn, i) => {
+  const nextFibers = nextVNodes.map((vn, i) => {
     const k = vn.key ?? `__idx_${i}`;
     const matched = prevByKey.get(k) ?? null;
-    return reconcileFiber(matched, vn, doc, root, effectQueue);
+    if (matched) {
+      prevByKey.delete(k);
+    }
+    return reconcileFiber(matched, vn, doc, root, effectQueue, selectValues);
   });
+  for (const unmatched of prevByKey.values()) {
+    unmountFiberSubtree(unmatched);
+  }
+  return nextFibers;
+}
+
+const CAMEL_ATTR_NAMES: Readonly<Record<string, string>> = {
+  htmlFor: "for",
+  tabIndex: "tabindex",
+  readOnly: "readonly",
+  colSpan: "colspan",
+  rowSpan: "rowspan",
+  autoComplete: "autocomplete",
+  maxLength: "maxlength",
+  minLength: "minlength",
+  spellCheck: "spellcheck",
+  contentEditable: "contenteditable",
+  httpEquiv: "http-equiv",
+  acceptCharset: "accept-charset",
+  autoFocus: "autofocus",
+  allowFullScreen: "allowfullscreen",
+  autoPlay: "autoplay",
+  formNoValidate: "formnovalidate",
+  isMap: "ismap",
+  itemScope: "itemscope",
+  noModule: "nomodule",
+  noValidate: "novalidate",
+  playsInline: "playsinline"
+};
+
+const BOOLEAN_ATTRS: ReadonlySet<string> = new Set([
+  "allowfullscreen",
+  "async",
+  "autofocus",
+  "autoplay",
+  "checked",
+  "controls",
+  "default",
+  "defer",
+  "disabled",
+  "formnovalidate",
+  "hidden",
+  "inert",
+  "ismap",
+  "itemscope",
+  "loop",
+  "multiple",
+  "muted",
+  "nomodule",
+  "novalidate",
+  "open",
+  "playsinline",
+  "readonly",
+  "required",
+  "reversed",
+  "selected"
+]);
+
+const ENUMERATED_BOOLEAN_ATTRS: ReadonlySet<string> = new Set([
+  "spellcheck",
+  "draggable",
+  "contenteditable"
+]);
+
+const VALID_ATTR_NAME = /^[A-Za-z_:][A-Za-z0-9_.:-]*$/;
+
+function resolveSelectedSet(raw: unknown): ReadonlySet<string> | null {
+  if (raw === undefined || raw === null) return null;
+  if (Array.isArray(raw)) return new Set(raw.map((v) => String(v)));
+  return new Set([String(raw)]);
+}
+
+function readOptionValue(props: Record<string, unknown>): string {
+  if (props.value !== undefined && props.value !== null) {
+    return String(props.value);
+  }
+  const textParts = expandChildNodes(props.children).filter(
+    (item): item is string | number | bigint =>
+      typeof item === "string" || typeof item === "number" || typeof item === "bigint"
+  );
+  return textParts.map(String).join("");
+}
+
+function setManagedAttribute(
+  dom: SimElement,
+  name: string,
+  val: string,
+  isBoolean = false
+): void {
+  dom.setAttribute(name, val);
+  if (isBoolean) {
+    dom.booleanAttributes.add(name);
+  }
+  dom.managedAttributes.add(name);
 }
 
 function applyDomProps(dom: SimElement, props: Record<string, unknown>): void {
-  dom.attributes.clear();
+  for (const prevAttr of Array.from(dom.managedAttributes)) {
+    dom.removeAttribute(prevAttr);
+  }
+  dom.managedAttributes.clear();
   dom.listeners.clear();
-  dom.disabled = false;
+  const tag = dom.tagName.toLowerCase();
 
-  for (const [k, v] of Object.entries(props)) {
-    if (k === "children" || k === "ref" || v === undefined || v === null) {
+  for (const [k, rawVal] of Object.entries(props)) {
+    if (k === "children" || k === "ref") continue;
+    if (k === "defaultChecked") {
+      if (props.checked === undefined && Boolean(rawVal)) {
+        setManagedAttribute(dom, "checked", "", true);
+      }
+      continue;
+    }
+    if (k === "defaultValue") {
+      if (
+        tag !== "select" &&
+        tag !== "textarea" &&
+        props.value === undefined &&
+        rawVal !== undefined &&
+        rawVal !== null
+      ) {
+        setManagedAttribute(dom, "value", String(rawVal));
+      }
+      continue;
+    }
+    if ((tag === "select" || tag === "textarea") && k === "value") {
+      continue;
+    }
+    if (rawVal === undefined || rawVal === null) {
       continue;
     }
     if (k === "dangerouslySetInnerHTML") {
       dom.ownerDocument.cspViolations.push({
         blockedDirective: "script-src 'self'",
-        detail: `dangerouslySetInnerHTML on <${dom.tagName.toLowerCase()}>`
+        detail: `dangerouslySetInnerHTML on <${tag}>`
       });
-      dom.setAttribute("dangerouslysetinnerhtml", "[blocked]");
+      setManagedAttribute(dom, "dangerouslysetinnerhtml", "[blocked]");
       continue;
     }
-    if (k.startsWith("on") && typeof v === "function") {
-      dom.listeners.set(k.slice(2).toLowerCase(), v as (ev: Record<string, unknown>) => void);
-      continue;
-    }
-    if (k === "className") {
-      if (v) dom.setAttribute("class", String(v));
-      continue;
-    }
-    if (k === "htmlFor") {
-      dom.setAttribute("for", String(v));
-      continue;
-    }
-    if (k === "tabIndex") {
-      dom.tabIndex = Number(v);
-      dom.setAttribute("tabindex", String(v));
-      continue;
-    }
-    if (typeof v === "boolean") {
-      if (k.startsWith("aria-") || k.startsWith("data-")) {
-        dom.setAttribute(k, String(v));
-      } else if (v) {
-        dom.setAttribute(k, "");
+    if (/^on[A-Z]/.test(k)) {
+      if (typeof rawVal === "function") {
+        dom.listeners.set(
+          k.slice(2).toLowerCase(),
+          rawVal as (ev: Record<string, unknown>) => void
+        );
       }
       continue;
     }
-    dom.setAttribute(k, String(v));
+    if (typeof rawVal === "function" || typeof rawVal === "symbol") {
+      continue;
+    }
+    if (k === "className") {
+      if (rawVal) setManagedAttribute(dom, "class", String(rawVal));
+      continue;
+    }
+    const attrName = Object.hasOwn(CAMEL_ATTR_NAMES, k) ? CAMEL_ATTR_NAMES[k]! : k;
+    if (!VALID_ATTR_NAME.test(attrName)) {
+      throw new Error(`Invalid HTML attribute name: ${attrName}`);
+    }
+    if (typeof rawVal === "boolean") {
+      if (
+        attrName.startsWith("aria-") ||
+        attrName.startsWith("data-") ||
+        ENUMERATED_BOOLEAN_ATTRS.has(attrName)
+      ) {
+        setManagedAttribute(dom, attrName, String(rawVal));
+      } else if (rawVal) {
+        setManagedAttribute(dom, attrName, "", BOOLEAN_ATTRS.has(attrName));
+      }
+      continue;
+    }
+    setManagedAttribute(dom, attrName, String(rawVal));
   }
 }
 
@@ -650,17 +869,41 @@ function isVNode(val: unknown): val is VNode {
   );
 }
 
-function flattenChildren(raw: unknown): VNode[] {
-  const out: VNode[] = [];
-  const push = (item: unknown) => {
-    if (Array.isArray(item)) {
-      for (const sub of item) push(sub);
-    } else if (isVNode(item)) {
+function isIterableCollection(val: unknown): val is Iterable<unknown> {
+  return (
+    typeof val === "object" &&
+    val !== null &&
+    !isVNode(val) &&
+    typeof (val as Iterable<unknown>)[Symbol.iterator] === "function"
+  );
+}
+
+function expandChildNodes(raw: unknown): Array<VNode | string | number | bigint> {
+  const out: Array<VNode | string | number | bigint> = [];
+  const collectItem = (item: unknown): void => {
+    if (item === null || item === undefined || typeof item === "boolean") {
+      return;
+    }
+    if (typeof item === "string" || typeof item === "number" || typeof item === "bigint") {
+      out.push(item);
+      return;
+    }
+    if (Array.isArray(item) || isIterableCollection(item)) {
+      for (const sub of item) collectItem(sub);
+      return;
+    }
+    if (isVNode(item)) {
       out.push(item);
     }
   };
-  push(raw);
+  collectItem(raw);
   return out;
+}
+
+function flattenChildren(raw: unknown): VNode[] {
+  return expandChildNodes(raw).map((item) =>
+    isVNode(item) ? item : createVNode(REACT_TEXT, { nodeValue: String(item) })
+  );
 }
 
 function runPendingEffects(fibers: readonly FiberInstance[]): void {

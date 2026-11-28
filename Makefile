@@ -5,6 +5,7 @@ build:
 
 test:
 	CARGO_BUILD_JOBS=1 cargo test --workspace --offline
+	node --experimental-strip-types scripts/build.ts
 	node --experimental-strip-types --import ./bench/register-react.ts --test tests/*.test.ts
 
 bench:
