@@ -74,7 +74,7 @@ echo "==> [6/7] Standalone SCSS Partial & Determinism Gate (scripts/check-scss.t
 node --experimental-strip-types "$REPO_ROOT/scripts/check-scss.ts"
 
 echo "==> [7/7] Unit/Integration Suite & Performance/Profiler/A11y Budgets"
-node --experimental-strip-types --import "$REPO_ROOT/bench/register-react.ts" --test "$REPO_ROOT/tests/laws.test.ts"
+node --experimental-strip-types --import "$REPO_ROOT/bench/register-react.ts" --test "$REPO_ROOT"/tests/*.test.ts
 node --experimental-strip-types "$REPO_ROOT/bench/run-bench.ts"
 
 echo "ALL 7 ARCHITECTURAL LAWS & VERIFICATION GATES PASSED."

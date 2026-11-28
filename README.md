@@ -2,7 +2,7 @@
 
 **Zero-runtime-CSS, stateless `1-In -> 1-Out` React UI primitives, pure-Rust static `styled` compiler, and `OffscreenCanvas` high-density telemetry visualization.**
 
-`vespoli-ui` eliminates runtime style engines, provider trees, hidden component state, inline styles, and vector markup bloat. Every component is a pure function mapping props directly to a single honest native HTML element, backed by layered CSS compiled ahead of time by `@vespoli/styled-compiler` (`#![forbid(unsafe_code)]` Rust + TypeScript AST pipeline).
+`vespoli-ui` eliminates runtime style engines, provider trees, hidden component state, inline styles, and vector markup bloat. Every component is a pure function mapping props directly to a single honest native HTML element, backed by layered CSS compiled ahead of time by `crates/compiler` (`#![forbid(unsafe_code)]` Rust compiler engine) and `@vespoli/styled-compiler` (`packages/styled-compiler` TypeScript AST extraction pipeline).
 
 ---
 
@@ -159,7 +159,7 @@ Requires Node.js `>= 22.6.0` and a Rust toolchain:
 ./scripts/check
 ```
 
-Enforces pure 7-bit ASCII hygiene, workflow pin verification, `cargo fmt --check`, `cargo clippy -- -D warnings`, Rust compiler unit tests, `vui-compile audit`, zero-runtime ESM/SCSS determinism, and performance/accessibility budgets completely offline.
+Enforces pure 7-bit ASCII hygiene, workflow pin verification, `cargo fmt --check`, `cargo clippy -- -D warnings`, Rust compiler unit tests, `vui-compile audit`, zero-runtime ESM/SCSS determinism, behavioral component tests (`tests/*.test.ts`), and performance/accessibility budgets completely offline.
 
 ---
 
